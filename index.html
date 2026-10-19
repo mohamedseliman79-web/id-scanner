@@ -201,7 +201,7 @@ button.slot { font: inherit; color: inherit; padding: 0; text-align: center; }
       <div class="row"><input id="key-input" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Paste your Gemini API key"><button id="key-save" class="btn primary" type="button">Save</button></div>
       <button id="key-remove" class="link" type="button" hidden>Remove the key from this phone</button>
     </details>
-    <p class="hint">Version 11</p>
+    <p class="hint">Version 12</p>
   </section>
 
   <section id="screen-camera" class="camera" hidden>
@@ -1430,7 +1430,7 @@ function renderOnPhoneResult(digits, geminiError, existingAccount) {
   const checks = [];
   checks.push({ label: 'ID number structure', status: parsed.isValid ? 'pass' : 'fail',
     detail: parsed.isValid ? '14 digits with a valid birth date and governorate code.'
-      : digits ? parsed.errors.join(' ') : 'No 14-digit number was found on the front. Retake it in better light.' });
+      : digits ? parsed.errors.join(' ') : 'The ID number couldn’t be read reliably on this phone. Use AI reading, or retake the front in better light.' });
   if (existingAccount === true) checks.push({ label: 'Existing account', status: 'fail', detail: 'An account already exists for this ID number.' });
   else if (existingAccount === false) checks.push({ label: 'Existing account', status: 'pass', detail: 'No existing account for this ID number.' });
   const front = state.sides.front?.doc, back = state.sides.back?.doc;
@@ -1441,7 +1441,7 @@ function renderOnPhoneResult(digits, geminiError, existingAccount) {
   }
   const fails = checks.filter((c) => c.status === 'fail').length;
   root.append(el('header', { class: 'result-head' },
-    el('h1', {}, parsed.isValid ? 'ID number read' : 'ID number not read'),
+    el('h1', {}, parsed.isValid ? 'ID number read' : 'ID number couldn’t be read reliably'),
     el('p', { class: `summary ${fails ? 'fail' : 'pass'}` }, parsed.isValid ? 'Read on this phone, nothing was sent anywhere' : 'Read on this phone')));
   for (const msg of alertMessages(checks)) root.append(el('p', { class: 'error', role: 'alert' }, msg));
   if (geminiError) root.append(el('p', { class: 'error' }, `The AI couldn’t read the card (${geminiError}), so only the ID number was read on the phone.`));
@@ -1532,20 +1532,25 @@ async function readIdNumberOnPhone(frontBlob) {
     { box: [0.3, 0.99, 0.70, 0.86], psm: '7' },
     { box: [0.25, 1, 0.55, 1], psm: '6', h: 420 },
   ];
-  let fallback = '';
-  for (const t of tries) {
+  // A number counts only when it is a valid, realistic ID number AND two different reads agree on it.
+  const seen = new Map();
+  const realistic = (cand) => {
+    const p = parseNationalId(cand);
+    if (!p.isValid || !p.birthDate) return false;
+    const age = ageOn(p.birthDate, new Date());
+    return age >= 16 && age <= 100;
+  };
+  for (let i = 0; i < tries.length; i++) {
+    const t = tries[i];
+    setReadingText(`Reading the ID number on this phone (${i + 1} of ${tries.length})…`);
     await worker.setParameters({ tessedit_pageseg_mode: t.psm });
     const { data } = await worker.recognize(ocrBand(bitmap, ...t.box, t.h || 140, t.bin !== false));
-    for (const cand of idCandidates(data.text || '')) {
-      if (parseNationalId(cand).isValid) return cand;
-      if (!fallback) fallback = cand;
-    }
-    if (!fallback) {
-      const any = toWesternDigits(data.text || '');
-      if (any.length > fallback.length) fallback = any;
+    for (const cand of new Set(idCandidates(data.text || '').filter(realistic))) {
+      seen.set(cand, (seen.get(cand) || 0) + 1);
+      if (seen.get(cand) >= 2) return cand;
     }
   }
-  return fallback;
+  return '';
 }
 
 // ---------- Reading with Gemini (optional) ----------
@@ -1665,8 +1670,29 @@ async function readWithOpenRouter(front, back, signal) {
 async function readWithGemini(frontBlob, backBlob, signal) {
   const [front, back] = await Promise.all([blobToBase64(frontBlob), blobToBase64(backBlob)]);
   if (isOpenRouterKey(geminiKey())) return readWithOpenRouter(front, back, signal);
-  setReadingText('Reading the card with Gemini…');
-  const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`, {
+  return readWithGeminiModels(front, back, signal);
+}
+
+let geminiModels = null;
+async function getGeminiModels() {
+  if (geminiModels) return geminiModels;
+  let found = [];
+  try {
+    const res = await fetch('https://generativelanguage.googleapis.com/v1beta/models?pageSize=200', { headers: { 'x-goog-api-key': geminiKey() } });
+    const data = await res.json();
+    found = (data?.models || [])
+      .filter((m) => (m.supportedGenerationMethods || []).includes('generateContent'))
+      .map((m) => String(m.name).replace(/^models\//, ''))
+      .filter((id) => /flash/i.test(id) && !/tts|live|image|audio|embed|transcribe|translate|thinking-exp/i.test(id));
+    const rank = (id) => (id === GEMINI_MODEL ? 0 : /lite/i.test(id) ? 2 : 1);
+    found.sort((a, b) => rank(a) - rank(b) || b.localeCompare(a));
+  } catch (e) { console.warn('Gemini model list unavailable', e); }
+  geminiModels = [...new Set([GEMINI_MODEL, ...found])].slice(0, 4);
+  return geminiModels;
+}
+
+async function askGemini(model, front, back, signal) {
+  const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
     method: 'POST',
     headers: { 'content-type': 'application/json', 'x-goog-api-key': geminiKey() },
     signal,
@@ -1680,9 +1706,35 @@ async function readWithGemini(frontBlob, backBlob, signal) {
     }),
   });
   const data = await res.json().catch(() => null);
-  if (!res.ok) throw new Error(data?.error?.message || `HTTP ${res.status}`);
+  if (!res.ok) {
+    const err = new Error(data?.error?.message || `HTTP ${res.status}`);
+    err.busy = res.status === 429 || res.status === 503 || /high demand|overloaded|unavailable/i.test(err.message);
+    err.badKey = res.status === 400 && /api key/i.test(err.message) || res.status === 401 || res.status === 403;
+    throw err;
+  }
   const text = (data?.candidates?.[0]?.content?.parts || []).map((p) => p.text || '').join('');
-  return { fields: parseJsonReply(text), model: GEMINI_MODEL };
+  return { fields: parseJsonReply(text), model };
+}
+
+async function readWithGeminiModels(front, back, signal) {
+  const models = await getGeminiModels();
+  const errors = [];
+  for (const model of models) {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      if (signal.aborted) throw new DOMException('Stopped', 'AbortError');
+      setReadingText(attempt ? `${model} is busy, trying again…` : `Reading the card with ${model}…`);
+      try {
+        return await askGemini(model, front, back, signal);
+      } catch (e) {
+        if (e?.name === 'AbortError') throw e;
+        if (e.badKey) throw new Error(`the Gemini key was refused (${e.message})`);
+        if (e.busy && attempt === 0) { await sleep(2500); continue; }
+        errors.push(`${model}: ${e.message}`);
+        break;
+      }
+    }
+  }
+  throw new Error(errors.join(' · '));
 }
 
 function normalizeFields(o) {
