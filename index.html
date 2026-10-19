@@ -857,7 +857,10 @@ function geometry() {
 }
 
 function analyze(c) {
-  if (c.checking) return;
+  if (c.checking) {
+    // safety net: never stay stuck on "Checking the document"
+    if (performance.now() - c.checking > 7000) c.checking = 0; else return;
+  }
   const g = geometry();
   const video = $('video');
   const k = Math.min(1, CFG.detectMax / Math.max(g.vw, g.vh));
@@ -1022,6 +1025,7 @@ function loadFaceDetector() {
         minDetectionConfidence: 0.5,
       });
     })().catch((e) => { console.warn('Face detector unavailable', e); return null; });
+    faceDetectorPromise = Promise.race([faceDetectorPromise, new Promise((r) => setTimeout(() => r(null), 8000))]);
   }
   return faceDetectorPromise;
 }
@@ -1082,7 +1086,7 @@ const DOC_LABEL = {
 };
 
 async function checkAndCapture(c, quadSmall, k) {
-  c.checking = true;
+  c.checking = performance.now();
   setStatus('Checking the document…', 'good');
   const video = $('video');
   const full = document.createElement('canvas');
@@ -1093,8 +1097,12 @@ async function checkAndCapture(c, quadSmall, k) {
   const src = fctx.getImageData(0, 0, full.width, full.height);
   let quad = quadSmall.map(([x, y]) => [x / k, y / k]);
   let doc;
-  try { doc = await classifyCard(warpQuad(src, quad, OUT_W, OUT_H)); }
-  catch (e) { console.warn(e); doc = { kind: 'unknown', upsideDown: false, metrics: 'check failed' }; }
+  try {
+    doc = await Promise.race([
+      classifyCard(warpQuad(src, quad, OUT_W, OUT_H)),
+      new Promise((r) => setTimeout(() => r({ kind: 'unknown', upsideDown: false, metrics: 'check timed out' }), 5000)),
+    ]);
+  } catch (e) { console.warn(e); doc = { kind: 'unknown', upsideDown: false, metrics: 'check failed' }; }
   if (state.cam !== c) return;
   c.docMetrics = doc.metrics;
   const problem = documentProblem(c.side, doc);
@@ -1104,7 +1112,7 @@ async function checkAndCapture(c, quadSmall, k) {
     c.holdUntil = performance.now() + CFG.holdMs;
     c.holdMsg = problem;
     setStatus(problem, 'bad');
-    c.checking = false;
+    c.checking = 0;
     return;
   }
   if (doc.upsideDown) quad = quad.slice(2).concat(quad.slice(0, 2));
@@ -1153,6 +1161,7 @@ $('review-use').addEventListener('click', async () => {
   else showResults();
 });
 
+setTimeout(loadFaceDetector, 300);
 $('start').addEventListener('click', () => {
   loadFaceDetector();
   for (const s of ['front', 'back']) if (state.sides[s]) URL.revokeObjectURL(state.sides[s].url);
