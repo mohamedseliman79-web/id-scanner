@@ -731,6 +731,7 @@ const CFG = {
   idMaxSat: 0.32,     // and little colour: average saturation, 0-1
   faceMin: 0.12,      // holder photo: face height as a share of the card height
   faceMax: 0.7,
+  photoDark: 0.2,     // front: share of dark pixels in the holder-photo area
   holdMs: 2500,       // how long a wrong-document message stays before scanning again
 };
 for (const k of Object.keys(CFG)) {
@@ -985,16 +986,6 @@ function drawOverlay(g, q, verdict) {
   ctx.beginPath();
   roundRectPath(ctx, x, y, w, h, 16);
   ctx.stroke();
-  if (q) {
-    ctx.lineWidth = 2;
-    ctx.setLineDash([7, 6]);
-    ctx.beginPath();
-    ctx.moveTo(...q[0]);
-    for (let i = 1; i < 4; i++) ctx.lineTo(...q[i]);
-    ctx.closePath();
-    ctx.stroke();
-    ctx.setLineDash([]);
-  }
 }
 
 function flash() {
@@ -1056,20 +1047,52 @@ function hasHolderPhoto(det, card, fromX) {
   });
 }
 
+/** Share of dark pixels in the holder-photo area (left third of the front) and in the same area on the right. */
+function photoAreaDarkness(img) {
+  const d = img.data, w = img.width, h = img.height;
+  const area = (x0, x1) => {
+    let dark = 0, n = 0;
+    for (let y = Math.round(h * 0.18); y < h * 0.9; y += 2) {
+      for (let x = Math.round(w * x0); x < w * x1; x += 2) {
+        const i = (y * w + x) * 4;
+        if (d[i] * 0.3 + d[i + 1] * 0.59 + d[i + 2] * 0.11 < 100) dark++;
+        n++;
+      }
+    }
+    return dark / n;
+  };
+  return { left: area(0.03, 0.34), right: area(0.66, 0.97) };
+}
+
 /** -> { kind: 'front' | 'back' | 'other' | 'unknown', upsideDown, metrics } */
 async function classifyCard(out) {
   const { bright, sat } = colourProfile(out);
   const pale = bright >= CFG.idMinBright && sat <= CFG.idMaxSat;
-  const colour = `bright ${bright} · sat ${sat.toFixed(2)}`;
-  if (!pale) return { kind: 'other', upsideDown: false, metrics: `${colour} · not pale` };
+  const dark = photoAreaDarkness(out);
+  const info = `bright ${bright} · sat ${sat.toFixed(2)} · photo-area ${(dark.left * 100).toFixed(0)}%/${(dark.right * 100).toFixed(0)}%`;
+  if (!pale) return { kind: 'other', upsideDown: false, metrics: `${info} · not pale` };
+
+  // 1) face model, when it loaded
+  let faceLeft = false, faceRight = false, model = 'no model';
   const det = await loadFaceDetector();
-  if (!det) return { kind: 'unknown', upsideDown: false, metrics: `${colour} · face check unavailable` };
-  const card = document.createElement('canvas');
-  card.width = OUT_W; card.height = OUT_H;
-  card.getContext('2d').putImageData(out, 0, 0);
-  if (hasHolderPhoto(det, card, 0)) return { kind: 'front', upsideDown: false, metrics: `${colour} · photo left` };
-  if (hasHolderPhoto(det, card, OUT_W / 2)) return { kind: 'front', upsideDown: true, metrics: `${colour} · photo right` };
-  return { kind: 'back', upsideDown: false, metrics: `${colour} · no photo` };
+  if (det) {
+    const card = document.createElement('canvas');
+    card.width = OUT_W; card.height = OUT_H;
+    card.getContext('2d').putImageData(out, 0, 0);
+    try {
+      faceLeft = hasHolderPhoto(det, card, 0);
+      faceRight = !faceLeft && hasHolderPhoto(det, card, OUT_W / 2);
+      model = faceLeft || faceRight ? 'face found' : 'no face';
+    } catch (e) { console.warn(e); model = 'model error'; }
+  }
+  // 2) photo area: a large dark block on one side only
+  const photoLeft = dark.left >= CFG.photoDark && dark.left > dark.right * 1.8;
+  const photoRight = !photoLeft && dark.right >= CFG.photoDark && dark.right > dark.left * 1.8;
+
+  const metrics = `${info} · ${model}`;
+  if (faceLeft || (!faceRight && photoLeft)) return { kind: 'front', upsideDown: false, metrics };
+  if (faceRight || photoRight) return { kind: 'front', upsideDown: true, metrics };
+  return { kind: 'back', upsideDown: false, metrics };
 }
 
 function documentProblem(side, doc) {
