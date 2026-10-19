@@ -156,6 +156,8 @@ body.cam-open { overflow: hidden; }
 .cam-status { font-size: 1.12rem; font-weight: 700; padding: 10px 18px; border-radius: 12px; background: rgba(0, 0, 0, 0.62); max-width: 30ch; }
 .cam-status.near { background: rgba(122, 72, 0, 0.9); }
 .cam-status.good { background: #1E7A46; }
+.cam-status.bad { background: #B3261E; }
+.doc-line { font-size: 0.85rem; }
 .cam-hint { font-size: 0.86rem; color: rgba(255, 255, 255, 0.82); max-width: 34ch; }
 .meter { width: min(320px, 80%); height: 6px; border-radius: 3px; background: rgba(255, 255, 255, 0.25); overflow: hidden; }
 .meter span { display: block; height: 100%; width: 0; background: #3DDC84; transition: width 0.1s linear; }
@@ -724,6 +726,12 @@ const CFG = {
   minSharp: 30,       // Laplacian variance of the card: below this, blurry
   maxMove: 0.018,     // corner movement between checks, as a share of the guide width
   stableFrames: 7,    // good checks in a row before capturing (about 0.8 s)
+  // Document check (runs once the photo quality passes)
+  idMinBright: 110,   // the Egyptian ID has a pale background: median brightness, 0-255
+  idMaxSat: 0.32,     // and little colour: average saturation, 0-1
+  faceMin: 0.12,      // holder photo: face height as a share of the card height
+  faceMax: 0.7,
+  holdMs: 2500,       // how long a wrong-document message stays before scanning again
 };
 for (const k of Object.keys(CFG)) {
   if (params.has(k)) { const v = Number(params.get(k)); if (Number.isFinite(v)) CFG[k] = v; }
@@ -849,6 +857,7 @@ function geometry() {
 }
 
 function analyze(c) {
+  if (c.checking) return;
   const g = geometry();
   const video = $('video');
   const k = Math.min(1, CFG.detectMax / Math.max(g.vw, g.vh));
@@ -873,13 +882,17 @@ function analyze(c) {
   c.prev = found ? found.quad : null;
   c.good = verdict.ok ? c.good + 1 : 0;
   c.metrics = verdict.metrics;
+  if (performance.now() < (c.holdUntil || 0)) {
+    Object.assign(verdict, { ok: false, msg: c.holdMsg, tone: 'bad' });
+    c.good = 0;
+  }
 
   const viewQuad = found ? found.quad.map(([x, y]) => [(x / k) * g.s + g.ox, (y / k) * g.s + g.oy]) : null;
   drawOverlay(g, viewQuad, verdict);
   $('cam-progress').style.width = `${Math.min(100, (c.good / CFG.stableFrames) * 100)}%`;
   setStatus(verdict.ok ? 'Hold still…' : verdict.msg, verdict.ok ? 'good' : verdict.tone);
-  if (DEBUG) $('cam-metrics').textContent = verdict.metrics || 'no card found';
-  if (c.good >= CFG.stableFrames) capture(c, found.quad, k);
+  if (DEBUG) $('cam-metrics').textContent = `${verdict.metrics || 'no card found'}${c.docMetrics ? ` · last doc: ${c.docMetrics}` : ''}`;
+  if (c.good >= CFG.stableFrames) checkAndCapture(c, found.quad, k);
 }
 
 function cornerAngleError(quad) {
@@ -988,18 +1001,117 @@ function flash() {
   f.classList.add('on');
 }
 
-function capture(c, quadSmall, k) {
+// ---------- Document check: Egyptian ID or not, front or back ----------
+// Runs on the phone. The front has the holder's photo on its left half; the back has no photo.
+// The Egyptian ID is also pale with little colour, which most other cards are not.
+const MP_VERSION = '0.10.14';
+let faceDetectorPromise = null;
+function loadFaceDetector() {
+  if (!faceDetectorPromise) {
+    faceDetectorPromise = (async () => {
+      const base = `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${MP_VERSION}`;
+      const mod = await import(base);
+      const { FaceDetector, FilesetResolver } = mod.FaceDetector ? mod : mod.default;
+      const vision = await FilesetResolver.forVisionTasks(`${base}/wasm`);
+      return FaceDetector.createFromOptions(vision, {
+        baseOptions: {
+          modelAssetPath: 'https://storage.googleapis.com/mediapipe-models/face_detector/blaze_face_short_range/float16/1/blaze_face_short_range.tflite',
+          delegate: 'CPU',
+        },
+        runningMode: 'IMAGE',
+        minDetectionConfidence: 0.5,
+      });
+    })().catch((e) => { console.warn('Face detector unavailable', e); return null; });
+  }
+  return faceDetectorPromise;
+}
+
+function colourProfile(img) {
+  const d = img.data, hist = new Uint32Array(256);
+  let satSum = 0, n = 0;
+  for (let y = 0; y < img.height; y += 3) {
+    for (let x = 0; x < img.width; x += 3) {
+      const i = (y * img.width + x) * 4;
+      const mx = Math.max(d[i], d[i + 1], d[i + 2]), mn = Math.min(d[i], d[i + 1], d[i + 2]);
+      hist[mx]++; satSum += mx ? (mx - mn) / mx : 0; n++;
+    }
+  }
+  let acc = 0, median = 0;
+  for (let v = 0; v < 256; v++) { acc += hist[v]; if (acc >= n / 2) { median = v; break; } }
+  return { bright: median, sat: satSum / n };
+}
+
+function hasHolderPhoto(det, card, fromX) {
+  const half = document.createElement('canvas');
+  half.width = OUT_W / 2; half.height = OUT_H;
+  half.getContext('2d').drawImage(card, fromX, 0, OUT_W / 2, OUT_H, 0, 0, OUT_W / 2, OUT_H);
+  const found = det.detect(half).detections || [];
+  return found.some((f) => {
+    const h = f.boundingBox.height / OUT_H;
+    return h >= CFG.faceMin && h <= CFG.faceMax;
+  });
+}
+
+/** -> { kind: 'front' | 'back' | 'other' | 'unknown', upsideDown, metrics } */
+async function classifyCard(out) {
+  const { bright, sat } = colourProfile(out);
+  const pale = bright >= CFG.idMinBright && sat <= CFG.idMaxSat;
+  const colour = `bright ${bright} · sat ${sat.toFixed(2)}`;
+  if (!pale) return { kind: 'other', upsideDown: false, metrics: `${colour} · not pale` };
+  const det = await loadFaceDetector();
+  if (!det) return { kind: 'unknown', upsideDown: false, metrics: `${colour} · face check unavailable` };
+  const card = document.createElement('canvas');
+  card.width = OUT_W; card.height = OUT_H;
+  card.getContext('2d').putImageData(out, 0, 0);
+  if (hasHolderPhoto(det, card, 0)) return { kind: 'front', upsideDown: false, metrics: `${colour} · photo left` };
+  if (hasHolderPhoto(det, card, OUT_W / 2)) return { kind: 'front', upsideDown: true, metrics: `${colour} · photo right` };
+  return { kind: 'back', upsideDown: false, metrics: `${colour} · no photo` };
+}
+
+function documentProblem(side, doc) {
+  if (doc.kind === 'other') return 'Not the correct document. Scan an Egyptian national ID';
+  if (side === 'front' && doc.kind === 'back') return 'Wrong ID side. This is the back, turn the card over';
+  if (side === 'back' && doc.kind === 'front') return 'Wrong ID side. This is the front, turn the card over';
+  return null;
+}
+
+const DOC_LABEL = {
+  front: 'Egyptian national ID, front side',
+  back: 'Egyptian national ID, back side',
+  unknown: 'Document check unavailable on this phone',
+};
+
+async function checkAndCapture(c, quadSmall, k) {
+  c.checking = true;
+  setStatus('Checking the document…', 'good');
   const video = $('video');
   const full = document.createElement('canvas');
   full.width = video.videoWidth;
   full.height = video.videoHeight;
   const fctx = full.getContext('2d');
   fctx.drawImage(video, 0, 0);
-  const side = c.side;
+  const src = fctx.getImageData(0, 0, full.width, full.height);
+  let quad = quadSmall.map(([x, y]) => [x / k, y / k]);
+  let doc;
+  try { doc = await classifyCard(warpQuad(src, quad, OUT_W, OUT_H)); }
+  catch (e) { console.warn(e); doc = { kind: 'unknown', upsideDown: false, metrics: 'check failed' }; }
+  if (state.cam !== c) return;
+  c.docMetrics = doc.metrics;
+  const problem = documentProblem(c.side, doc);
+  if (problem) {
+    c.good = 0;
+    c.prev = null;
+    c.holdUntil = performance.now() + CFG.holdMs;
+    c.holdMsg = problem;
+    setStatus(problem, 'bad');
+    c.checking = false;
+    return;
+  }
+  if (doc.upsideDown) quad = quad.slice(2).concat(quad.slice(0, 2));
+  const side = c.side, metrics = c.metrics;
   stopCamera();
   flash();
-  const src = fctx.getImageData(0, 0, full.width, full.height);
-  openReview(side, src, quadSmall.map(([x, y]) => [x / k, y / k]), c.metrics);
+  openReview(side, src, quad, metrics, doc);
 }
 
 // ---------- Review: check the straightened photo, then move on ----------
@@ -1013,8 +1125,8 @@ function renderReview() {
   $('review-warn').hidden = glareFraction(out) <= 0.04;
 }
 
-function openReview(side, src, quad, metrics) {
-  state.review = { side, src, quad, metrics };
+function openReview(side, src, quad, metrics, doc) {
+  state.review = { side, src, quad, metrics, doc };
   $('review-title').textContent = `${SIDE_NAME[side]} captured`;
   $('review-use').textContent = side === 'front' ? 'Use this and scan the back' : 'Use this and see results';
   renderReview();
@@ -1035,13 +1147,14 @@ $('review-use').addEventListener('click', async () => {
   const r = state.review; if (!r) return;
   const blob = await new Promise((res) => $('review-canvas').toBlob(res, 'image/jpeg', 0.9));
   if (state.sides[r.side]) URL.revokeObjectURL(state.sides[r.side].url);
-  state.sides[r.side] = { blob, url: URL.createObjectURL(blob), glare: glareFraction(r.out), metrics: r.metrics };
+  state.sides[r.side] = { blob, url: URL.createObjectURL(blob), glare: glareFraction(r.out), metrics: r.metrics, doc: r.doc };
   state.review = null;
   if (r.side === 'front') startCamera('back');
   else showResults();
 });
 
 $('start').addEventListener('click', () => {
+  loadFaceDetector();
   for (const s of ['front', 'back']) if (state.sides[s]) URL.revokeObjectURL(state.sides[s].url);
   state.sides = { front: null, back: null };
   startCamera('front');
@@ -1056,6 +1169,7 @@ function captureSection() {
     list.append(el('li', { class: 'check pass' },
       el('span', { class: 'badge', 'aria-label': 'pass' }, '✓'),
       el('div', {}, el('strong', {}, `${SIDE_NAME[side]} auto-captured`),
+        el('p', { class: 'doc-line' }, DOC_LABEL[s.doc?.kind] || ''),
         el('p', { class: 'metrics-line' }, s.metrics || ''))));
   }
   return el('section', {}, el('h2', {}, 'Capture'), list);
