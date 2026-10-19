@@ -201,7 +201,7 @@ button.slot { font: inherit; color: inherit; padding: 0; text-align: center; }
       <div class="row"><input id="key-input" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Paste your Gemini API key"><button id="key-save" class="btn primary" type="button">Save</button></div>
       <button id="key-remove" class="link" type="button" hidden>Remove the key from this phone</button>
     </details>
-    <p class="hint">Version 9</p>
+    <p class="hint">Version 10</p>
   </section>
 
   <section id="screen-camera" class="camera" hidden>
@@ -1330,12 +1330,14 @@ function imagesSection() {
   return el('section', {}, el('h2', {}, 'Straightened images'), imgs);
 }
 
+function setReadingText(t) { const n = document.getElementById('reading-text'); if (n) n.textContent = t; }
+
 async function showResults() {
   const root = $('result-body');
   root.replaceChildren();
   show('result');
   const reading = el('div', { class: 'reading' }, el('span', { class: 'spinner', 'aria-hidden': 'true' }),
-    el('span', {}, geminiKey() ? 'Reading the card with AI, this can take up to 30 seconds' : 'Reading the ID number on this phone…'));
+    el('span', { id: 'reading-text' }, geminiKey() ? 'Reading the card with AI…' : 'Reading the ID number on this phone…'));
   root.append(el('header', { class: 'result-head' }, el('h1', {}, 'Card captured')), reading, captureSection(), imagesSection());
   state.controller = new AbortController();
   const signal = state.controller.signal;
@@ -1343,15 +1345,17 @@ async function showResults() {
   try {
     if (geminiKey()) {
       try {
-        const raw = await readWithGemini(state.sides.front.blob, state.sides.back.blob, signal);
-        renderResult({ front: state.sides.front, back: state.sides.back, fields: normalizeFields(raw) });
+        const { fields, model } = await readWithGemini(state.sides.front.blob, state.sides.back.blob, signal);
+        renderResult({ front: state.sides.front, back: state.sides.back, fields: normalizeFields(fields) });
         root.insertBefore(captureSection(), root.querySelector('section:last-of-type'));
+        root.querySelector('.result-head')?.append(el('p', { class: 'hint', style: 'text-align:left' }, `Read by ${model}`));
         return;
       } catch (e) {
         if (e?.name === 'AbortError') return;
         geminiError = e?.message || 'unknown error';
       }
     }
+    setReadingText('Reading the ID number on this phone. The first time takes longer while the reader downloads…');
     const digits = await readIdNumberOnPhone(state.sides.front.blob);
     if (signal.aborted) return;
     renderOnPhoneResult(digits, geminiError);
@@ -1425,11 +1429,11 @@ function getOcrWorker() {
   return ocrWorkerPromise;
 }
 
-/** Crops a band of the straightened front, scales it up and makes it black text on white. */
-function ocrBand(bitmap, x0, x1, y0, y1) {
+/** Crops part of the straightened front, scales it up and (optionally) makes it black text on white. */
+function ocrBand(bitmap, x0, x1, y0, y1, targetH = 140, binarize = true) {
   const W = bitmap.width, H = bitmap.height;
   const sx = Math.round(W * x0), sy = Math.round(H * y0), sw = Math.round(W * (x1 - x0)), sh = Math.round(H * (y1 - y0));
-  const scale = 140 / sh;
+  const scale = targetH / sh;
   const c = document.createElement('canvas');
   c.width = Math.round(sw * scale); c.height = Math.round(sh * scale);
   const ctx = c.getContext('2d', { willReadFrequently: true });
@@ -1437,6 +1441,11 @@ function ocrBand(bitmap, x0, x1, y0, y1) {
   ctx.drawImage(bitmap, sx, sy, sw, sh, 0, 0, c.width, c.height);
   const img = ctx.getImageData(0, 0, c.width, c.height);
   const g = toGray(img.data, c.width, c.height);
+  if (!binarize) {
+    for (let i = 0, j = 0; i < g.length; i++, j += 4) img.data[j] = img.data[j + 1] = img.data[j + 2] = g[i];
+    ctx.putImageData(img, 0, 0);
+    return c;
+  }
   const t = otsu(g);
   for (let i = 0, j = 0; i < g.length; i++, j += 4) {
     const v = g[i] > t ? 255 : 0;
@@ -1457,10 +1466,17 @@ async function readIdNumberOnPhone(frontBlob) {
   const worker = await getOcrWorker();
   const bitmap = await createImageBitmap(frontBlob);
   // the number sits along the bottom of the front, right of the photo
-  const bands = [[0.3, 0.99, 0.76, 0.92], [0.3, 0.99, 0.81, 0.97], [0.3, 0.99, 0.70, 0.86], [0.25, 0.99, 0.72, 0.98]];
+  const tries = [
+    { box: [0.3, 0.99, 0.76, 0.92], psm: '7' },
+    { box: [0.3, 0.99, 0.81, 0.97], psm: '7' },
+    { box: [0.25, 1, 0.55, 1], psm: '6', h: 420, bin: false },
+    { box: [0.3, 0.99, 0.70, 0.86], psm: '7' },
+    { box: [0.25, 1, 0.55, 1], psm: '6', h: 420 },
+  ];
   let fallback = '';
-  for (const [x0, x1, y0, y1] of bands) {
-    const { data } = await worker.recognize(ocrBand(bitmap, x0, x1, y0, y1));
+  for (const t of tries) {
+    await worker.setParameters({ tessedit_pageseg_mode: t.psm });
+    const { data } = await worker.recognize(ocrBand(bitmap, ...t.box, t.h || 140, t.bin !== false));
     for (const cand of idCandidates(data.text || '')) {
       if (parseNationalId(cand).isValid) return cand;
       if (!fallback) fallback = cand;
@@ -1513,13 +1529,41 @@ function parseJsonReply(text) {
   return JSON.parse(text.slice(start, end + 1));
 }
 
-async function readWithOpenRouter(front, back, signal) {
+// Free OpenRouter models that accept images, best first. Looked up once from OpenRouter's public list.
+const PREFERRED = [/gemini/i, /qwen.*vl|qwen.*vision|qwen3/i, /llama-4|llama-3\.2.*vision/i, /gemma-3|gemma/i, /mistral|pixtral/i];
+let freeVisionModels = null;
+async function getFreeVisionModels() {
+  if (freeVisionModels) return freeVisionModels;
+  let list = [];
+  try {
+    const res = await fetch('https://openrouter.ai/api/v1/models');
+    const data = await res.json();
+    list = (data?.data || []).filter((m) => {
+      const mods = m.architecture?.input_modalities || [];
+      const sees = mods.includes('image') || /image/.test(m.architecture?.modality || '');
+      const free = String(m.id).endsWith(':free') || (Number(m.pricing?.prompt) === 0 && Number(m.pricing?.completion) === 0);
+      return sees && free && m.id !== 'openrouter/free';
+    }).map((m) => m.id);
+    const rank = (id) => { const i = PREFERRED.findIndex((re) => re.test(id)); return i < 0 ? PREFERRED.length : i; };
+    list.sort((a, b) => rank(a) - rank(b));
+  } catch (e) { console.warn('OpenRouter model list unavailable', e); }
+  freeVisionModels = [...list.slice(0, 3), OPENROUTER_MODEL];
+  return freeVisionModels;
+}
+
+function replyText(message) {
+  const c = message?.content;
+  const text = Array.isArray(c) ? c.map((p) => p.text || '').join('') : String(c || '');
+  return text.trim() ? text : String(message?.reasoning || '');
+}
+
+async function askOpenRouter(model, front, back, signal) {
   const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
     method: 'POST',
     headers: { 'content-type': 'application/json', authorization: `Bearer ${geminiKey()}`, 'X-Title': 'Egyptian ID Scanner' },
     signal,
     body: JSON.stringify({
-      model: OPENROUTER_MODEL,
+      model,
       temperature: 0,
       messages: [{ role: 'user', content: [
         { type: 'text', text: FIELD_PROMPT },
@@ -1530,14 +1574,38 @@ async function readWithOpenRouter(front, back, signal) {
   });
   const data = await res.json().catch(() => null);
   if (!res.ok) throw new Error(data?.error?.message || `HTTP ${res.status}`);
-  const msg = data?.choices?.[0]?.message?.content;
-  const text = Array.isArray(msg) ? msg.map((p) => p.text || '').join('') : String(msg || '');
-  return parseJsonReply(text);
+  const text = replyText(data?.choices?.[0]?.message);
+  try { return { fields: parseJsonReply(text), model: data?.model || model }; }
+  catch { throw new Error(`no card data in the answer${text ? `: “${text.slice(0, 80)}…”` : ''}`); }
+}
+
+async function readWithOpenRouter(front, back, signal) {
+  const models = await getFreeVisionModels();
+  const errors = [];
+  for (const model of models) {
+    if (signal.aborted) throw new DOMException('Stopped', 'AbortError');
+    setReadingText(`Reading the card with ${model}…`);
+    const ctl = new AbortController();
+    const stop = () => ctl.abort();
+    signal.addEventListener('abort', stop, { once: true });
+    const timer = setTimeout(stop, 45000);
+    try {
+      return await askOpenRouter(model, front, back, ctl.signal);
+    } catch (e) {
+      if (signal.aborted) throw e;
+      errors.push(`${model}: ${e?.name === 'AbortError' ? 'took too long' : e?.message}`);
+    } finally {
+      clearTimeout(timer);
+      signal.removeEventListener('abort', stop);
+    }
+  }
+  throw new Error(errors.join(' · '));
 }
 
 async function readWithGemini(frontBlob, backBlob, signal) {
   const [front, back] = await Promise.all([blobToBase64(frontBlob), blobToBase64(backBlob)]);
   if (isOpenRouterKey(geminiKey())) return readWithOpenRouter(front, back, signal);
+  setReadingText('Reading the card with Gemini…');
   const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`, {
     method: 'POST',
     headers: { 'content-type': 'application/json', 'x-goog-api-key': geminiKey() },
@@ -1554,7 +1622,7 @@ async function readWithGemini(frontBlob, backBlob, signal) {
   const data = await res.json().catch(() => null);
   if (!res.ok) throw new Error(data?.error?.message || `HTTP ${res.status}`);
   const text = (data?.candidates?.[0]?.content?.parts || []).map((p) => p.text || '').join('');
-  return parseJsonReply(text);
+  return { fields: parseJsonReply(text), model: GEMINI_MODEL };
 }
 
 function normalizeFields(o) {
