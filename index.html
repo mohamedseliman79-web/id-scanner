@@ -201,7 +201,7 @@ button.slot { font: inherit; color: inherit; padding: 0; text-align: center; }
       <div class="row"><input id="key-input" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Paste your Gemini API key"><button id="key-save" class="btn primary" type="button">Save</button></div>
       <button id="key-remove" class="link" type="button" hidden>Remove the key from this phone</button>
     </details>
-    <p class="hint">Version 8</p>
+    <p class="hint">Version 9</p>
   </section>
 
   <section id="screen-camera" class="camera" hidden>
@@ -746,7 +746,10 @@ const CFG = {
   maxGlare: 0.05,     // share of near-white pixels on the card
   minSharp: 12,       // Laplacian variance of the card: below this, blurry
   maxMove: 0.035,     // corner movement between checks, as a share of the guide width
-  stableFrames: 4,    // good checks in a row before capturing (about 0.8 s)
+  stableFrames: 4,
+  edgeBand: 0.18,     // how far from the frame line an edge is looked for, as a share of the frame height
+  edgeStep: 16,       // brightness jump that counts as an edge, 0-255
+  edgeCover: 0.5,     // share of each side where that jump must be found    // good checks in a row before capturing (about 0.8 s)
   // Document check (runs once the photo quality passes)
   idMinBright: 110,   // the Egyptian ID has a pale background: median brightness, 0-255
   idMaxSat: 0.32,     // and little colour: average saturation, 0-1
@@ -898,8 +901,12 @@ function analyze(c) {
     x: ((g.guide.x - g.ox) / g.s) * k, y: ((g.guide.y - g.oy) / g.s) * k,
     w: (g.guide.w / g.s) * k, h: (g.guide.h / g.s) * k,
   };
-  const found = detectCard(img.data, sw, sh);
-  const verdict = found ? judge(found.quad, G, img) : { ok: false, msg: 'Place the card inside the frame', tone: '' };
+  const edges = findEdgesAtFrame(img, G);
+  const found = edges.ok ? { quad: edges.quad } : null;
+  const verdict = found ? judge(found.quad, G, img)
+    : { ok: false, tone: edges.count >= 2 ? 'near' : '',
+        msg: edges.count >= 2 ? 'Line up all four card edges with the frame' : 'Place the card inside the frame',
+        metrics: `edges ${edges.cov.map((v) => Math.round(v * 100)).join('/')}%` };
   if (verdict.ok && c.prev) {
     const move = Math.max(...found.quad.map((p, i) => dist(p, c.prev[i]))) / G.w;
     if (move > CFG.maxMove) Object.assign(verdict, { ok: false, msg: 'Hold still', tone: 'near' });
@@ -918,6 +925,78 @@ function analyze(c) {
   setStatus(verdict.ok ? 'Hold still…' : verdict.msg, verdict.ok ? 'good' : verdict.tone);
   if (DEBUG) $('cam-metrics').textContent = `${verdict.metrics || 'no card found'}${c.docMetrics ? ` · last doc: ${c.docMetrics}` : ''}`;
   if (c.good >= CFG.stableFrames) checkAndCapture(c, found.quad, k);
+}
+
+/**
+ * Looks for the card's four edges near the four sides of the frame.
+ * For each side it scans a band around the frame line (two halves, so a slightly turned card works)
+ * and keeps the line where the brightness jump runs along most of the side.
+ * Returns { ok, quad (TL, TR, BR, BL), cov: coverage per side, count: sides found }.
+ */
+function findEdgesAtFrame(img, G) {
+  const w = img.width, h = img.height;
+  const g = boxBlur(toGray(img.data, w, h), w, h, 1);
+  const T = CFG.edgeStep, need = CFG.edgeCover;
+  const at = (x, y) => g[Math.max(0, Math.min(h - 1, y)) * w + Math.max(0, Math.min(w - 1, x))];
+  // The card's outline is the OUTERMOST strong line in the band (text lines on the card sit further in).
+  function pick(cands, outerFirst) {
+    const top = Math.max(0, ...cands.map((c) => c.cov));
+    const strong = cands.filter((c) => c.cov >= Math.max(need, 0.8 * top));
+    if (!strong.length) return { pos: cands[cands.length >> 1].pos, cov: top };
+    const run = outerFirst ? strong[0] : strong[strong.length - 1];
+    // centre of the run of rows that belong to that same edge
+    const same = strong.filter((c) => Math.abs(c.pos - run.pos) <= 4);
+    return { pos: same.reduce((a, c) => a + c.pos, 0) / same.length, cov: Math.max(...same.map((c) => c.cov)) };
+  }
+  // horizontal edge (top/bottom): vertical brightness jump along x in [xa, xb], searched for y in [y0, y1]
+  function hLine(xa, xb, y0, y1, outerFirst) {
+    const xs = []; for (let x = Math.round(xa); x <= xb; x += 2) xs.push(x);
+    const cands = [];
+    for (let y = Math.round(y0); y <= y1; y++) {
+      let hit = 0;
+      for (const x of xs) if (Math.abs(at(x, y + 2) - at(x, y - 2)) > T) hit++;
+      cands.push({ pos: y, cov: hit / xs.length });
+    }
+    return pick(cands, outerFirst);
+  }
+  function vLine(ya, yb, x0, x1, outerFirst) {
+    const ys = []; for (let y = Math.round(ya); y <= yb; y += 2) ys.push(y);
+    const cands = [];
+    for (let x = Math.round(x0); x <= x1; x++) {
+      let hit = 0;
+      for (const y of ys) if (Math.abs(at(x + 2, y) - at(x - 2, y)) > T) hit++;
+      cands.push({ pos: x, cov: hit / ys.length });
+    }
+    return pick(cands, outerFirst);
+  }
+  const by = CFG.edgeBand * G.h, bx = CFG.edgeBand * G.h;
+  const xA = [G.x + 0.08 * G.w, G.x + 0.48 * G.w], xB = [G.x + 0.52 * G.w, G.x + 0.92 * G.w];
+  const yA = [G.y + 0.1 * G.h, G.y + 0.48 * G.h], yB = [G.y + 0.52 * G.h, G.y + 0.9 * G.h];
+  const mid = (r) => (r[0] + r[1]) / 2;
+  const top = [hLine(...xA, G.y - by, G.y + by, true), hLine(...xB, G.y - by, G.y + by, true)];
+  const bot = [hLine(...xA, G.y + G.h - by, G.y + G.h + by, false), hLine(...xB, G.y + G.h - by, G.y + G.h + by, false)];
+  const lef = [vLine(...yA, G.x - bx, G.x + bx, true), vLine(...yB, G.x - bx, G.x + bx, true)];
+  const rig = [vLine(...yA, G.x + G.w - bx, G.x + G.w + bx, false), vLine(...yB, G.x + G.w - bx, G.x + G.w + bx, false)];
+  const cov = [top, rig, bot, lef].map((p) => Math.min(p[0].cov, p[1].cov));
+  const count = cov.filter((c) => c >= need).length;
+  if (count < 4) return { ok: false, cov, count };
+  // lines through the two half-points of each side, then corners where neighbouring lines meet
+  const L = {
+    top: [[mid(xA), top[0].pos], [mid(xB), top[1].pos]],
+    bot: [[mid(xA), bot[0].pos], [mid(xB), bot[1].pos]],
+    lef: [[lef[0].pos, mid(yA)], [lef[1].pos, mid(yB)]],
+    rig: [[rig[0].pos, mid(yA)], [rig[1].pos, mid(yB)]],
+  };
+  const meet = (a, b) => {
+    const [p1, p2] = a, [p3, p4] = b;
+    const d = (p1[0] - p2[0]) * (p3[1] - p4[1]) - (p1[1] - p2[1]) * (p3[0] - p4[0]);
+    if (Math.abs(d) < 1e-6) return null;
+    const t = ((p1[0] - p3[0]) * (p3[1] - p4[1]) - (p1[1] - p3[1]) * (p3[0] - p4[0])) / d;
+    return [p1[0] + t * (p2[0] - p1[0]), p1[1] + t * (p2[1] - p1[1])];
+  };
+  const quad = [meet(L.top, L.lef), meet(L.top, L.rig), meet(L.bot, L.rig), meet(L.bot, L.lef)];
+  if (quad.some((p) => !p)) return { ok: false, cov, count: 3 };
+  return { ok: true, quad, cov, count };
 }
 
 function cornerAngleError(quad) {
