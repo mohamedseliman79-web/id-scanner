@@ -201,7 +201,7 @@ button.slot { font: inherit; color: inherit; padding: 0; text-align: center; }
       <div class="row"><input id="key-input" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Paste your Gemini API key"><button id="key-save" class="btn primary" type="button">Save</button></div>
       <button id="key-remove" class="link" type="button" hidden>Remove the key from this phone</button>
     </details>
-    <p class="hint">Version 7</p>
+    <p class="hint">Version 8</p>
   </section>
 
   <section id="screen-camera" class="camera" hidden>
@@ -736,24 +736,24 @@ const DEBUG = params.has('debug');
 const CFG = {
   detectMax: 640,     // longest side of the frame used for detection, in pixels
   intervalMs: 110,    // time between checks
-  minFill: 0.55,      // card area / guide area: below this, "Move closer"
+  minFill: 0.4,       // card area / guide area: below this, "Move closer"
   maxFill: 1.3,       // above this, "Move back"
-  cornerTol: 0.07,    // how far a corner may sit outside the guide, as a share of the guide width
-  ratioTol: 0.12,     // allowed difference from the 85.6 x 54 mm card ratio
-  angleTol: 13,       // allowed degrees away from 90 at each corner (tilted phone)
-  minLuma: 75,        // average brightness of the card, 0-255
-  maxLuma: 235,
-  maxGlare: 0.02,     // share of near-white pixels on the card
-  minSharp: 30,       // Laplacian variance of the card: below this, blurry
-  maxMove: 0.018,     // corner movement between checks, as a share of the guide width
-  stableFrames: 7,    // good checks in a row before capturing (about 0.8 s)
+  cornerTol: 0.14,    // how far a corner may sit outside the guide, as a share of the guide width
+  ratioTol: 0.2,      // allowed difference from the 85.6 x 54 mm card ratio
+  angleTol: 20,       // allowed degrees away from 90 at each corner (tilted phone)
+  minLuma: 60,        // average brightness of the card, 0-255
+  maxLuma: 245,
+  maxGlare: 0.05,     // share of near-white pixels on the card
+  minSharp: 12,       // Laplacian variance of the card: below this, blurry
+  maxMove: 0.035,     // corner movement between checks, as a share of the guide width
+  stableFrames: 4,    // good checks in a row before capturing (about 0.8 s)
   // Document check (runs once the photo quality passes)
   idMinBright: 110,   // the Egyptian ID has a pale background: median brightness, 0-255
   idMaxSat: 0.32,     // and little colour: average saturation, 0-1
   faceMin: 0.12,      // holder photo: face height as a share of the card height
   faceMax: 0.7,
   photoDark: 0.2,     // front: share of dark pixels in the holder-photo area
-  holdMs: 2500,       // how long a wrong-document message stays before scanning again
+  holdMs: 1500,       // how long a wrong-document message stays before scanning again
 };
 for (const k of Object.keys(CFG)) {
   if (params.has(k)) { const v = Number(params.get(k)); if (Number.isFinite(v)) CFG[k] = v; }
