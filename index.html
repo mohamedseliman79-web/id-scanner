@@ -201,7 +201,7 @@ button.slot { font: inherit; color: inherit; padding: 0; text-align: center; }
       <div class="row"><input id="key-input" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Paste your Gemini API key"><button id="key-save" class="btn primary" type="button">Save</button></div>
       <button id="key-remove" class="link" type="button" hidden>Remove the key from this phone</button>
     </details>
-    <p class="hint">Version 6</p>
+    <p class="hint">Version 7</p>
   </section>
 
   <section id="screen-camera" class="camera" hidden>
@@ -1224,7 +1224,6 @@ $('key-remove').addEventListener('click', () => { setGeminiKey(''); renderKeyBox
 renderKeyBox();
 $('start').addEventListener('click', () => {
   loadFaceDetector();
-  if (!geminiKey()) getOcrWorker().catch(() => {});
   for (const s of ['front', 'back']) if (state.sides[s]) URL.revokeObjectURL(state.sides[s].url);
   state.sides = { front: null, back: null };
   startCamera('front');
