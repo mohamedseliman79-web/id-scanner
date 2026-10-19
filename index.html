@@ -158,6 +158,14 @@ body.cam-open { overflow: hidden; }
 .cam-status.good { background: #1E7A46; }
 .cam-status.bad { background: #B3261E; }
 .doc-line { font-size: 0.85rem; }
+.key-box { background: var(--surface); border: 1px solid var(--rule); border-radius: 12px; padding: 12px 14px; display: block; }
+.key-box summary { cursor: pointer; font-weight: 500; color: var(--accent); min-height: 32px; display: flex; align-items: center; }
+.key-box[open] > * + * { margin-top: 10px; }
+.key-box input { font: inherit; min-height: 52px; border-radius: 12px; border: 1.5px solid var(--rule); background: var(--paper); color: var(--ink); padding: 0 14px; min-width: 0; }
+.key-box input:focus-visible { outline: 3px solid var(--outline); outline-offset: 1px; }
+.key-box .row > .btn { flex: none; width: auto; }
+.vh-label { font-weight: 500; display: block; }
+.key-box a { color: var(--accent); }
 .cam-hint { font-size: 0.86rem; color: rgba(255, 255, 255, 0.82); max-width: 34ch; }
 .meter { width: min(320px, 80%); height: 6px; border-radius: 3px; background: rgba(255, 255, 255, 0.25); overflow: hidden; }
 .meter span { display: block; height: 100%; width: 0; background: #3DDC84; transition: width 0.1s linear; }
@@ -185,7 +193,15 @@ button.slot { font: inherit; color: inherit; padding: 0; text-align: center; }
     </header>
     <p id="error" class="error" role="alert" hidden></p>
     <button id="start" class="btn primary" type="button">Start</button>
-    <p class="hint">Version 4</p>
+    <details class="key-box" id="key-box">
+      <summary id="key-summary">Read all details with Gemini (optional)</summary>
+      <p class="hint" style="text-align:left">Without a key, only the ID number is read, on this phone. With a free Gemini key, the name, address, dates and other fields are read too. Get a key at <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">aistudio.google.com/apikey</a>. It’s saved only on this phone.</p>
+      <p class="hint" style="text-align:left">On Google’s free tier the photos may be used to improve Google’s products. Only scan cards whose owners agree.</p>
+      <label for="key-input" class="vh-label">Gemini API key</label>
+      <div class="row"><input id="key-input" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Paste your Gemini API key"><button id="key-save" class="btn primary" type="button">Save</button></div>
+      <button id="key-remove" class="link" type="button" hidden>Remove the key from this phone</button>
+    </details>
+    <p class="hint">Version 5</p>
   </section>
 
   <section id="screen-camera" class="camera" hidden>
@@ -701,10 +717,12 @@ function runChecks(f, today = new Date()) {
 }
 
 // ---------- Settings ----------
-// Optional: paste a free Gemini API key from https://aistudio.google.com/apikey between the quotes
-// to also read the name, ID number and dates. Leave it empty to test auto-capture only.
-const GEMINI_API_KEY = '';
-const GEMINI_MODEL = 'gemini-flash-latest';
+// Reading: the ID number is always read on the phone. Full reading with Gemini switches on when a
+// Gemini API key is entered on the start screen; the key is kept only in that phone's browser.
+const GEMINI_MODEL = 'gemini-3.6-flash';
+const KEY_STORE = 'idscanner.geminiKey';
+function geminiKey() { try { return localStorage.getItem(KEY_STORE) || ''; } catch { return ''; } }
+function setGeminiKey(v) { try { v ? localStorage.setItem(KEY_STORE, v) : localStorage.removeItem(KEY_STORE); } catch { /* storage blocked */ } }
 
 // ---------- App ----------
 const $ = (id) => document.getElementById(id);
@@ -1186,8 +1204,25 @@ $('review-use').addEventListener('click', async () => {
 });
 
 setTimeout(loadFaceDetector, 300);
+function renderKeyBox() {
+  const has = !!geminiKey();
+  $('key-summary').textContent = has ? 'Gemini reading is on for this phone' : 'Read all details with Gemini (optional)';
+  $('key-remove').hidden = !has;
+  $('key-input').value = '';
+  $('key-input').placeholder = has ? 'Key saved. Paste a new one to replace it' : 'Paste your Gemini API key';
+}
+$('key-save').addEventListener('click', () => {
+  const v = $('key-input').value.trim();
+  if (!v) return;
+  setGeminiKey(v);
+  renderKeyBox();
+  $('key-box').open = false;
+});
+$('key-remove').addEventListener('click', () => { setGeminiKey(''); renderKeyBox(); });
+renderKeyBox();
 $('start').addEventListener('click', () => {
   loadFaceDetector();
+  if (!geminiKey()) getOcrWorker().catch(() => {});
   for (const s of ['front', 'back']) if (state.sides[s]) URL.revokeObjectURL(state.sides[s].url);
   state.sides = { front: null, back: null };
   startCamera('front');
@@ -1219,28 +1254,143 @@ async function showResults() {
   const root = $('result-body');
   root.replaceChildren();
   show('result');
-  if (!GEMINI_API_KEY) {
-    root.append(
-      el('header', { class: 'result-head' }, el('h1', {}, 'Card captured'),
-        el('p', { class: 'summary pass' }, 'Both sides were captured automatically')),
-      captureSection(), imagesSection(),
-      el('p', { class: 'hint', style: 'text-align:left' }, 'Reading the name and ID number is off. Add a Gemini API key to the file to turn it on.'));
-    return;
-  }
   const reading = el('div', { class: 'reading' }, el('span', { class: 'spinner', 'aria-hidden': 'true' }),
-    el('span', {}, 'Reading the card, this can take up to 30 seconds'));
+    el('span', {}, geminiKey() ? 'Reading the card with Gemini, this can take up to 30 seconds' : 'Reading the ID number on this phone…'));
   root.append(el('header', { class: 'result-head' }, el('h1', {}, 'Card captured')), reading, captureSection(), imagesSection());
   state.controller = new AbortController();
+  const signal = state.controller.signal;
+  let geminiError = null;
   try {
-    const raw = await readWithGemini(state.sides.front.blob, state.sides.back.blob, state.controller.signal);
-    renderResult({ front: state.sides.front, back: state.sides.back, fields: normalizeFields(raw) });
-    root.insertBefore(captureSection(), root.querySelector('section:last-of-type'));
+    if (geminiKey()) {
+      try {
+        const raw = await readWithGemini(state.sides.front.blob, state.sides.back.blob, signal);
+        renderResult({ front: state.sides.front, back: state.sides.back, fields: normalizeFields(raw) });
+        root.insertBefore(captureSection(), root.querySelector('section:last-of-type'));
+        return;
+      } catch (e) {
+        if (e?.name === 'AbortError') return;
+        geminiError = e?.message || 'unknown error';
+      }
+    }
+    const digits = await readIdNumberOnPhone(state.sides.front.blob);
+    if (signal.aborted) return;
+    renderOnPhoneResult(digits, geminiError);
   } catch (e) {
-    if (e?.name === 'AbortError') return;
-    reading.replaceWith(el('p', { class: 'error' }, `The card couldn’t be read: ${e?.message || 'unknown error'}. The captured images are below.`));
+    if (signal.aborted) return;
+    reading.replaceWith(el('p', { class: 'error' }, `The ID number couldn’t be read on this phone (${e?.message || 'unknown error'}). The captured images are below.`));
   } finally {
     state.controller = null;
   }
+}
+
+function renderOnPhoneResult(digits, geminiError) {
+  const root = $('result-body');
+  root.replaceChildren();
+  const parsed = parseNationalId(digits || '');
+  const checks = [];
+  checks.push({ label: 'ID number structure', status: parsed.isValid ? 'pass' : 'fail',
+    detail: parsed.isValid ? '14 digits with a valid birth date and governorate code.'
+      : digits ? parsed.errors.join(' ') : 'No 14-digit number was found on the front. Retake it in better light.' });
+  const front = state.sides.front?.doc, back = state.sides.back?.doc;
+  if (front && back && front.kind !== 'unknown' && back.kind !== 'unknown') {
+    const ok = front.kind === 'front' && back.kind === 'back';
+    checks.push({ label: 'Document', status: ok ? 'pass' : 'warn',
+      detail: ok ? 'Front and back recognized as an Egyptian national ID.' : 'The sides could not both be confirmed.' });
+  }
+  const fails = checks.filter((c) => c.status === 'fail').length;
+  root.append(el('header', { class: 'result-head' },
+    el('h1', {}, parsed.isValid ? 'ID number read' : 'ID number not read'),
+    el('p', { class: `summary ${fails ? 'fail' : 'pass'}` }, parsed.isValid ? 'Read on this phone, nothing was sent anywhere' : 'Read on this phone')));
+  if (geminiError) root.append(el('p', { class: 'error' }, `Gemini couldn’t read the card (${geminiError}), so only the ID number was read on the phone.`));
+  root.append(idBreakdown(parsed));
+  const list = el('ul', { class: 'checks' });
+  const mark = { pass: '✓', warn: '!', fail: '✕' };
+  for (const c of checks) {
+    list.append(el('li', { class: `check ${c.status}` },
+      el('span', { class: 'badge', 'aria-label': c.status }, mark[c.status]),
+      el('div', {}, el('strong', {}, c.label), el('p', {}, c.detail))));
+  }
+  root.append(el('section', {}, el('h2', {}, 'Checks'), list));
+  if (parsed.isValid) {
+    root.append(el('section', {}, el('h2', {}, 'From the ID number'), fieldRows([
+      ['Birth date', parsed.birthDate ? dateFmt.format(parsed.birthDate) : null, false],
+      ['Governorate', parsed.governorateName, false],
+      ['Gender', parsed.gender === 'male' ? 'Male' : 'Female', false],
+    ])));
+  }
+  if (!geminiKey()) root.append(el('p', { class: 'hint', style: 'text-align:left' }, 'Name, address and dates need Gemini. Add a key on the start screen to read them.'));
+  root.append(captureSection(), imagesSection());
+}
+
+// ---------- Reading the ID number on the phone (Tesseract, Arabic) ----------
+const TESSERACT_URL = 'https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js';
+let ocrWorkerPromise = null;
+function loadScript(src) {
+  return new Promise((resolve, reject) => {
+    const sc = document.createElement('script');
+    sc.src = src; sc.onload = resolve; sc.onerror = () => reject(new Error('the text reader didn’t load'));
+    document.head.append(sc);
+  });
+}
+function getOcrWorker() {
+  if (!ocrWorkerPromise) {
+    ocrWorkerPromise = (async () => {
+      if (!window.Tesseract) await loadScript(TESSERACT_URL);
+      const w = await window.Tesseract.createWorker('ara', 1);
+      await w.setParameters({ tessedit_char_whitelist: '٠١٢٣٤٥٦٧٨٩0123456789', tessedit_pageseg_mode: '7' });
+      return w;
+    })();
+    ocrWorkerPromise.catch(() => { ocrWorkerPromise = null; });
+  }
+  return ocrWorkerPromise;
+}
+
+/** Crops a band of the straightened front, scales it up and makes it black text on white. */
+function ocrBand(bitmap, x0, x1, y0, y1) {
+  const W = bitmap.width, H = bitmap.height;
+  const sx = Math.round(W * x0), sy = Math.round(H * y0), sw = Math.round(W * (x1 - x0)), sh = Math.round(H * (y1 - y0));
+  const scale = 140 / sh;
+  const c = document.createElement('canvas');
+  c.width = Math.round(sw * scale); c.height = Math.round(sh * scale);
+  const ctx = c.getContext('2d', { willReadFrequently: true });
+  ctx.imageSmoothingQuality = 'high';
+  ctx.drawImage(bitmap, sx, sy, sw, sh, 0, 0, c.width, c.height);
+  const img = ctx.getImageData(0, 0, c.width, c.height);
+  const g = toGray(img.data, c.width, c.height);
+  const t = otsu(g);
+  for (let i = 0, j = 0; i < g.length; i++, j += 4) {
+    const v = g[i] > t ? 255 : 0;
+    img.data[j] = img.data[j + 1] = img.data[j + 2] = v;
+  }
+  ctx.putImageData(img, 0, 0);
+  return c;
+}
+
+function idCandidates(text) {
+  const runs = toWesternDigitsKeepSep(text).replace(/[^0-9]/g, ' ').split(/\s+/).join('');
+  const out = [];
+  for (let i = 0; i + 14 <= runs.length; i++) out.push(runs.slice(i, i + 14));
+  return out.flatMap((c) => [c, [...c].reverse().join('')]);
+}
+
+async function readIdNumberOnPhone(frontBlob) {
+  const worker = await getOcrWorker();
+  const bitmap = await createImageBitmap(frontBlob);
+  // the number sits along the bottom of the front, right of the photo
+  const bands = [[0.3, 0.99, 0.76, 0.92], [0.3, 0.99, 0.81, 0.97], [0.3, 0.99, 0.70, 0.86], [0.25, 0.99, 0.72, 0.98]];
+  let fallback = '';
+  for (const [x0, x1, y0, y1] of bands) {
+    const { data } = await worker.recognize(ocrBand(bitmap, x0, x1, y0, y1));
+    for (const cand of idCandidates(data.text || '')) {
+      if (parseNationalId(cand).isValid) return cand;
+      if (!fallback) fallback = cand;
+    }
+    if (!fallback) {
+      const any = toWesternDigits(data.text || '');
+      if (any.length > fallback.length) fallback = any;
+    }
+  }
+  return fallback;
 }
 
 // ---------- Reading with Gemini (optional) ----------
@@ -1281,7 +1431,7 @@ async function readWithGemini(frontBlob, backBlob, signal) {
   const [front, back] = await Promise.all([blobToBase64(frontBlob), blobToBase64(backBlob)]);
   const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json', 'x-goog-api-key': GEMINI_API_KEY },
+    headers: { 'content-type': 'application/json', 'x-goog-api-key': geminiKey() },
     signal,
     body: JSON.stringify({
       contents: [{ role: 'user', parts: [
