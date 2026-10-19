@@ -1,0 +1,1270 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0E6E6B">
+<title>Egyptian ID Scanner</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+:root {
+  --ink: #14302F;
+  --muted: #546866;
+  --paper: #F3F7F7;
+  --surface: #FFFFFF;
+  --tint: #DDEDEE;
+  --rule: #C9DADA;
+  --accent: #0E6E6B;
+  --on-accent: #FFFFFF;
+  --pass: #1E7A46;
+  --warn: #9A5306;
+  --fail: #B3261E;
+  --fail-bg: #FBECEA;
+  --warn-bg: #FBF1E3;
+  --outline: #2EC4BE;
+  color-scheme: light;
+  box-sizing: border-box;
+  padding-top: env(safe-area-inset-top, 0px);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --ink: #E3EFEE; --muted: #9DB3B1; --paper: #0D1919; --surface: #142424; --tint: #1B3232;
+    --rule: #2A4443; --accent: #4FB8B2; --on-accent: #062221; --pass: #5CC489; --warn: #E3A458;
+    --fail: #F07B72; --fail-bg: #3A1D1B; --warn-bg: #352712; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --ink: #E3EFEE; --muted: #9DB3B1; --paper: #0D1919; --surface: #142424; --tint: #1B3232;
+  --rule: #2A4443; --accent: #4FB8B2; --on-accent: #062221; --pass: #5CC489; --warn: #E3A458;
+  --fail: #F07B72; --fail-bg: #3A1D1B; --warn-bg: #352712; color-scheme: dark;
+}
+*, *::before, *::after { box-sizing: inherit; }
+html { scroll-padding-top: env(safe-area-inset-top, 0px); -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0; background: var(--paper); color: var(--ink);
+  font-family: "IBM Plex Sans Arabic", system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans Arabic", sans-serif;
+  font-size: 16px; line-height: 1.5;
+}
+main { max-width: 560px; margin: 0 auto; padding-block: 20px 40px; padding-left: max(20px, env(safe-area-inset-left, 0px)); padding-right: max(20px, env(safe-area-inset-right, 0px)); }
+section[hidden], [hidden] { display: none !important; }
+h1 { font-size: 1.65rem; line-height: 1.2; margin: 0 0 6px; letter-spacing: -0.01em; }
+h2 { font-size: 1.05rem; margin: 0 0 10px; }
+p { margin: 0; }
+.lead { color: var(--muted); font-size: 0.95rem; max-width: 46ch; }
+.screen > * + * { margin-top: 16px; }
+.vh { position: absolute; width: 1px; height: 1px; opacity: 0; overflow: hidden; pointer-events: none; }
+
+button { font: inherit; }
+.btn {
+  display: flex; align-items: center; justify-content: center; width: 100%;
+  min-height: 52px; padding: 0 20px; border-radius: 12px; border: 1.5px solid var(--accent);
+  font-weight: 500; font-size: 1rem; cursor: pointer; text-decoration: none;
+}
+.btn.primary { background: var(--accent); color: var(--on-accent); }
+.btn.secondary { background: transparent; color: var(--accent); }
+.btn:disabled { opacity: 0.45; cursor: default; }
+.btn:focus-visible, .slot:focus-within, .history-item:focus-visible, .link:focus-visible {
+  outline: 3px solid var(--outline); outline-offset: 2px;
+}
+.row { display: flex; gap: 10px; }
+.row > * { flex: 1; }
+.link { background: none; border: 0; color: var(--accent); font-weight: 500; padding: 8px 0; cursor: pointer; }
+
+.notice { background: var(--warn-bg); color: var(--ink); border-left: 3px solid var(--warn); padding: 12px 14px; border-radius: 8px; font-size: 0.95rem; }
+.error { background: var(--fail-bg); color: var(--fail); border-left: 3px solid var(--fail); padding: 12px 14px; border-radius: 8px; }
+
+/* Card-shaped slots: the one memorable shape on the scan screen */
+.slot {
+  position: relative; display: block; width: 100%; aspect-ratio: 85.6 / 54;
+  border-radius: 14px; overflow: hidden; cursor: pointer;
+  border: 2px dashed var(--accent); background: var(--tint);
+}
+.slot.filled { border: 0; background: var(--ink); }
+.slot img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.slot-empty { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; padding: 20px; text-align: center; }
+.slot-empty strong { font-size: 1.1rem; }
+.slot-empty span { color: var(--muted); font-size: 0.9rem; }
+.slot-empty .slot-cta { color: var(--accent); font-weight: 500; margin-top: 8px; }
+.slot-tag { position: absolute; left: 10px; bottom: 10px; background: rgba(10, 30, 30, 0.82); color: #fff; font-size: 0.8rem; font-weight: 500; padding: 4px 10px; border-radius: 8px; }
+.side-warn { color: var(--warn); font-size: 0.88rem; margin-top: 6px !important; }
+.hint { color: var(--muted); font-size: 0.9rem; text-align: center; }
+.reading { display: flex; align-items: center; gap: 12px; color: var(--muted); }
+.reading .spacer { flex: 1; }
+.spinner { width: 20px; height: 20px; border-radius: 50%; border: 2.5px solid var(--rule); border-top-color: var(--accent); animation: spin 0.9s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .spinner { animation: none; border-top-color: var(--rule); border-color: var(--accent); } }
+
+/* Adjust screen */
+.stage-wrap { display: flex; justify-content: center; }
+#stage { display: block; touch-action: none; border-radius: 10px; }
+.preview { display: flex; gap: 14px; align-items: center; }
+#preview { width: 46%; height: auto; aspect-ratio: 85.6 / 54; border-radius: 8px; background: var(--tint); }
+.preview p { color: var(--muted); font-size: 0.88rem; }
+
+/* Result screen */
+.result-head .name { font-size: 1.8rem; }
+.ar { text-align: right; }
+.summary { font-weight: 500; }
+.summary.pass { color: var(--pass); } .summary.warn { color: var(--warn); } .summary.fail { color: var(--fail); }
+.idnum { background: var(--tint); border-radius: 14px; padding: 16px; }
+.idnum-row { display: flex; flex-wrap: wrap; gap: 8px clamp(5px, 1.6vw, 12px); }
+.seg { display: flex; flex-direction: column; align-items: center; max-width: 112px; }
+.digits { font-size: clamp(1.3rem, 6vw, 1.95rem); font-weight: 700; letter-spacing: 0.04em; font-variant-numeric: tabular-nums; border-bottom: 2.5px solid var(--accent); padding-bottom: 2px; }
+.digits.bad { color: var(--fail); border-bottom-color: var(--fail); }
+.seg-cap { color: var(--muted); font-size: 0.74rem; white-space: nowrap; text-align: center; margin-top: 4px; line-height: 1.25; }
+.idnum-western { color: var(--muted); font-size: 0.85rem; letter-spacing: 0.15em; margin-top: 12px !important; font-variant-numeric: tabular-nums; }
+.idnum-error { color: var(--fail); margin-top: 10px !important; }
+.checks { list-style: none; margin: 0; padding: 0; display: grid; gap: 14px; }
+.check { display: flex; gap: 12px; align-items: flex-start; }
+.check p { color: var(--muted); font-size: 0.92rem; }
+.badge { flex: none; width: 24px; height: 24px; border-radius: 50%; display: grid; place-items: center; color: #fff; font-weight: 700; font-size: 0.8rem; margin-top: 1px; }
+.check.pass .badge { background: var(--pass); } .check.warn .badge { background: var(--warn); } .check.fail .badge { background: var(--fail); }
+:root[data-theme="dark"] .badge { color: #0D1919; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .badge { color: #0D1919; } }
+.fields { margin: 0; }
+.field { display: flex; gap: 14px; padding: 10px 0; border-bottom: 1px solid var(--rule); }
+.field dt { width: 108px; flex: none; color: var(--muted); font-size: 0.9rem; padding-top: 1px; }
+.field dd { margin: 0; flex: 1; text-align: right; overflow-wrap: anywhere; }
+.field dd.ar { font-size: 1.05rem; }
+.field dd.missing { color: var(--muted); font-style: italic; }
+.thumbs { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.thumbs img { width: 100%; border-radius: 8px; display: block; }
+
+/* History */
+.history-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.history-item { width: 100%; display: flex; gap: 14px; align-items: center; text-align: left; background: var(--surface); color: var(--ink); border: 1px solid var(--rule); border-radius: 12px; padding: 14px; cursor: pointer; }
+.history-text { display: flex; flex-direction: column; flex: 1; min-width: 0; }
+.history-text span { color: var(--muted); font-size: 0.88rem; }
+.dot { width: 10px; height: 10px; border-radius: 50%; flex: none; }
+.dot.pass { background: var(--pass); } .dot.fail { background: var(--fail); }
+
+/* Live camera */
+body.cam-open { overflow: hidden; }
+.camera { position: fixed; inset: 0; background: #000; z-index: 20; }
+.camera video, .camera canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+.camera video { object-fit: cover; }
+.cam-top { position: absolute; top: 0; left: 0; right: 0; display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: calc(env(safe-area-inset-top, 0px) + 12px) max(16px, env(safe-area-inset-right, 0px)) 12px max(16px, env(safe-area-inset-left, 0px)); color: #fff; }
+.cam-btn { background: rgba(0, 0, 0, 0.55); color: #fff; border: 1px solid rgba(255, 255, 255, 0.45); border-radius: 999px; min-height: 44px; padding: 0 18px; font-weight: 500; cursor: pointer; }
+.cam-btn:focus-visible { outline: 3px solid var(--outline); outline-offset: 2px; }
+.cam-side { font-weight: 700; font-size: 1.05rem; background: rgba(0, 0, 0, 0.55); padding: 6px 14px; border-radius: 999px; }
+.cam-bottom { position: absolute; left: 0; right: 0; bottom: 0; display: grid; gap: 12px; justify-items: center; text-align: center; color: #fff;
+  padding: 16px max(16px, env(safe-area-inset-right, 0px)) calc(env(safe-area-inset-bottom, 0px) + 28px) max(16px, env(safe-area-inset-left, 0px)); }
+.cam-status { font-size: 1.12rem; font-weight: 700; padding: 10px 18px; border-radius: 12px; background: rgba(0, 0, 0, 0.62); max-width: 30ch; }
+.cam-status.near { background: rgba(122, 72, 0, 0.9); }
+.cam-status.good { background: #1E7A46; }
+.cam-hint { font-size: 0.86rem; color: rgba(255, 255, 255, 0.82); max-width: 34ch; }
+.meter { width: min(320px, 80%); height: 6px; border-radius: 3px; background: rgba(255, 255, 255, 0.25); overflow: hidden; }
+.meter span { display: block; height: 100%; width: 0; background: #3DDC84; transition: width 0.1s linear; }
+.metrics { font-size: 0.78rem; color: rgba(255, 255, 255, 0.85); font-variant-numeric: tabular-nums; }
+.flash { position: fixed; inset: 0; background: #fff; opacity: 0; pointer-events: none; z-index: 30; }
+.flash.on { animation: flash 0.35s ease-out; }
+@keyframes flash { from { opacity: 0.85; } to { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .flash.on { animation: none; } .meter span { transition: none; } }
+button.slot { font: inherit; color: inherit; padding: 0; text-align: center; }
+.review-img { display: block; width: 100%; max-width: 100%; height: auto; aspect-ratio: 85.6 / 54; border-radius: 12px; background: var(--tint); }
+.code-box { display: grid; gap: 8px; background: var(--surface); border: 1px solid var(--rule); border-radius: 12px; padding: 14px; }
+.code-box label { font-weight: 500; }
+.code-box input { font: inherit; min-height: 52px; border-radius: 12px; border: 1.5px solid var(--rule); background: var(--paper); color: var(--ink); padding: 0 14px; min-width: 0; }
+.code-box input:focus-visible { outline: 3px solid var(--outline); outline-offset: 1px; }
+.code-box .row > .btn { flex: none; width: auto; }
+.metrics-line { font-variant-numeric: tabular-nums; font-size: 0.85rem; }
+</style>
+</head>
+<body>
+<main>
+  <section id="screen-scan" class="screen">
+    <header>
+      <h1>Scan a national ID</h1>
+      <p class="lead">Put the card on a dark table in good light. Tap Start, hold the phone above the card and fit it inside the frame. The camera takes the photo by itself, first the front, then the back.</p>
+    </header>
+    <p id="error" class="error" role="alert" hidden></p>
+    <button id="start" class="btn primary" type="button">Start</button>
+  </section>
+
+  <section id="screen-camera" class="camera" hidden>
+    <video id="video" playsinline muted autoplay></video>
+    <canvas id="overlay" aria-hidden="true"></canvas>
+    <div class="cam-top">
+      <button id="cam-close" class="cam-btn" type="button">Cancel</button>
+      <span id="cam-side" class="cam-side">Front</span>
+    </div>
+    <div class="cam-bottom">
+      <p id="cam-status" class="cam-status" aria-live="polite">Starting the camera…</p>
+      <div class="meter" aria-hidden="true"><span id="cam-progress"></span></div>
+      <p class="cam-hint">Fit the card inside the frame. The photo is taken automatically.</p>
+      <p id="cam-metrics" class="metrics" hidden></p>
+    </div>
+  </section>
+  <div id="flash" class="flash" aria-hidden="true"></div>
+
+  <section id="screen-review" class="screen" hidden>
+    <header>
+      <h1 id="review-title">Front captured</h1>
+      <p class="lead">Check that the text is sharp and the card is the right way up.</p>
+    </header>
+    <canvas id="review-canvas" class="review-img" aria-label="Straightened card"></canvas>
+    <p id="review-warn" class="side-warn" hidden>There’s glare on this side. If text looks washed out, retake it away from direct light.</p>
+    <button id="review-use" class="btn primary" type="button">Use this</button>
+    <div class="row">
+      <button id="review-turn" class="btn secondary" type="button">Turn 180°</button>
+      <button id="review-retake" class="btn secondary" type="button">Retake</button>
+    </div>
+  </section>
+
+  <section id="screen-result" class="screen" hidden>
+    <div id="result-body" class="screen"></div>
+    <button id="again" class="btn primary" type="button">Scan another card</button>
+  </section>
+</main>
+<script>
+// ---------- Card border detection (runs on the phone, no libraries) ----------
+// Works best with a light card on a darker surface. Pipeline:
+// grayscale -> blur -> threshold (Otsu and two neighbours)
+// -> morphological opening -> connected components -> convex hull
+// -> largest inscribed quadrilateral -> refine each side by line fitting
+// -> score by rectangularity and closeness to the ID-1 card ratio.
+
+const CARD_RATIO = 85.6 / 54;
+
+function toGray(rgba, w, h) {
+  const g = new Uint8Array(w * h);
+  for (let i = 0, j = 0; i < g.length; i++, j += 4) {
+    g[i] = (rgba[j] * 77 + rgba[j + 1] * 150 + rgba[j + 2] * 29) >> 8;
+  }
+  return g;
+}
+
+function boxBlur(src, w, h, r) {
+  const tmp = new Float32Array(w * h);
+  const out = new Uint8Array(w * h);
+  const size = 2 * r + 1;
+  for (let y = 0; y < h; y++) {
+    let acc = 0;
+    for (let x = -r; x <= r; x++) acc += src[y * w + Math.min(w - 1, Math.max(0, x))];
+    for (let x = 0; x < w; x++) {
+      tmp[y * w + x] = acc / size;
+      acc += src[y * w + Math.min(w - 1, x + r + 1)] - src[y * w + Math.max(0, x - r)];
+    }
+  }
+  for (let x = 0; x < w; x++) {
+    let acc = 0;
+    for (let y = -r; y <= r; y++) acc += tmp[Math.min(h - 1, Math.max(0, y)) * w + x];
+    for (let y = 0; y < h; y++) {
+      out[y * w + x] = acc / size;
+      acc += tmp[Math.min(h - 1, y + r + 1) * w + x] - tmp[Math.max(0, y - r) * w + x];
+    }
+  }
+  return out;
+}
+
+function otsu(gray) {
+  const hist = new Array(256).fill(0);
+  for (const v of gray) hist[v]++;
+  const total = gray.length;
+  let sum = 0;
+  for (let i = 0; i < 256; i++) sum += i * hist[i];
+  let sumB = 0, wB = 0, best = 0, threshold = 127;
+  for (let t = 0; t < 256; t++) {
+    wB += hist[t];
+    if (!wB) continue;
+    const wF = total - wB;
+    if (!wF) break;
+    sumB += t * hist[t];
+    const mB = sumB / wB, mF = (sum - sumB) / wF;
+    const between = wB * wF * (mB - mF) ** 2;
+    if (between > best) { best = between; threshold = t; }
+  }
+  return threshold;
+}
+
+function morph(mask, w, h, erode) {
+  const out = new Uint8Array(w * h);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      let v = erode ? 1 : 0;
+      for (let dy = -1; dy <= 1 && v === (erode ? 1 : 0); dy++) {
+        const yy = y + dy;
+        for (let dx = -1; dx <= 1; dx++) {
+          const xx = x + dx;
+          const m = yy < 0 || yy >= h || xx < 0 || xx >= w ? 0 : mask[yy * w + xx];
+          if (erode && !m) { v = 0; break; }
+          if (!erode && m) { v = 1; break; }
+        }
+      }
+      out[y * w + x] = v;
+    }
+  }
+  return out;
+}
+
+function components(mask, w, h, minCount) {
+  const labels = new Int32Array(w * h);
+  const comps = [];
+  const stack = new Int32Array(w * h);
+  let next = 0;
+  for (let start = 0; start < mask.length; start++) {
+    if (!mask[start] || labels[start]) continue;
+    next++;
+    let sp = 0, count = 0;
+    let minX = w, maxX = 0, minY = h, maxY = 0;
+    stack[sp++] = start;
+    labels[start] = next;
+    while (sp) {
+      const p = stack[--sp];
+      count++;
+      const x = p % w, y = (p / w) | 0;
+      if (x < minX) minX = x; if (x > maxX) maxX = x;
+      if (y < minY) minY = y; if (y > maxY) maxY = y;
+      if (x > 0 && mask[p - 1] && !labels[p - 1]) { labels[p - 1] = next; stack[sp++] = p - 1; }
+      if (x < w - 1 && mask[p + 1] && !labels[p + 1]) { labels[p + 1] = next; stack[sp++] = p + 1; }
+      if (y > 0 && mask[p - w] && !labels[p - w]) { labels[p - w] = next; stack[sp++] = p - w; }
+      if (y < h - 1 && mask[p + w] && !labels[p + w]) { labels[p + w] = next; stack[sp++] = p + w; }
+    }
+    if (count >= minCount) comps.push({ label: next, count, minX, maxX, minY, maxY });
+  }
+  return { labels, comps };
+}
+
+function boundaryPoints(labels, w, h, label, box) {
+  const pts = [];
+  for (let y = box.minY; y <= box.maxY; y++) {
+    for (let x = box.minX; x <= box.maxX; x++) {
+      const p = y * w + x;
+      if (labels[p] !== label) continue;
+      if (x === 0 || y === 0 || x === w - 1 || y === h - 1 ||
+          labels[p - 1] !== label || labels[p + 1] !== label ||
+          labels[p - w] !== label || labels[p + w] !== label) {
+        pts.push([x, y]);
+      }
+    }
+  }
+  return pts;
+}
+
+function convexHull(points) {
+  const pts = points.slice().sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+  if (pts.length < 3) return pts;
+  const cross = (o, a, b) => (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]);
+  const lower = [];
+  for (const p of pts) {
+    while (lower.length >= 2 && cross(lower[lower.length - 2], lower[lower.length - 1], p) <= 0) lower.pop();
+    lower.push(p);
+  }
+  const upper = [];
+  for (let i = pts.length - 1; i >= 0; i--) {
+    const p = pts[i];
+    while (upper.length >= 2 && cross(upper[upper.length - 2], upper[upper.length - 1], p) <= 0) upper.pop();
+    upper.push(p);
+  }
+  upper.pop(); lower.pop();
+  return lower.concat(upper);
+}
+
+function polyArea(pts) {
+  let a = 0;
+  for (let i = 0; i < pts.length; i++) {
+    const [x1, y1] = pts[i], [x2, y2] = pts[(i + 1) % pts.length];
+    a += x1 * y2 - x2 * y1;
+  }
+  return Math.abs(a) / 2;
+}
+
+/** Largest-area quadrilateral whose corners are hull vertices. */
+function maxQuad(hull) {
+  let h = hull;
+  const cap = 56;
+  if (h.length > cap) {
+    const step = h.length / cap;
+    h = Array.from({ length: cap }, (_, i) => hull[Math.floor(i * step)]);
+  }
+  const n = h.length;
+  if (n < 4) return null;
+  const tri = (a, b, c) => Math.abs((b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])) / 2;
+  let best = -1, quad = null;
+  for (let i = 0; i < n - 3; i++)
+    for (let j = i + 1; j < n - 2; j++)
+      for (let k = j + 1; k < n - 1; k++) {
+        const t1 = tri(h[i], h[j], h[k]);
+        for (let l = k + 1; l < n; l++) {
+          const area = t1 + tri(h[i], h[k], h[l]);
+          if (area > best) { best = area; quad = [h[i], h[j], h[k], h[l]]; }
+        }
+      }
+  return quad;
+}
+
+function dist(a, b) { return Math.hypot(a[0] - b[0], a[1] - b[1]); }
+
+/** Fit a line to boundary points near each side, then intersect neighbours (fixes rounded corners). */
+function refineQuad(quad, pts) {
+  const lines = [];
+  for (let s = 0; s < 4; s++) {
+    const a = quad[s], b = quad[(s + 1) % 4];
+    const dx = b[0] - a[0], dy = b[1] - a[1];
+    const len2 = dx * dx + dy * dy, len = Math.sqrt(len2);
+    const tol = Math.max(3, 0.03 * len);
+    let n = 0, mx = 0, my = 0;
+    const near = [];
+    for (const p of pts) {
+      const px = p[0] - a[0], py = p[1] - a[1];
+      const t = (px * dx + py * dy) / len2;
+      if (t < 0.12 || t > 0.88) continue;
+      if (Math.abs(dx * py - dy * px) / len > tol) continue;
+      near.push(p); n++; mx += p[0]; my += p[1];
+    }
+    if (n < 8) return quad;
+    mx /= n; my /= n;
+    let sxx = 0, sxy = 0, syy = 0;
+    for (const [x, y] of near) { sxx += (x - mx) ** 2; sxy += (x - mx) * (y - my); syy += (y - my) ** 2; }
+    const angle = 0.5 * Math.atan2(2 * sxy, sxx - syy);
+    lines.push({ p: [mx, my], d: [Math.cos(angle), Math.sin(angle)] });
+  }
+  const out = [];
+  for (let s = 0; s < 4; s++) {
+    const L1 = lines[(s + 3) % 4], L2 = lines[s];
+    const det = L1.d[0] * L2.d[1] - L1.d[1] * L2.d[0];
+    if (Math.abs(det) < 1e-6) return quad;
+    const t = ((L2.p[0] - L1.p[0]) * L2.d[1] - (L2.p[1] - L1.p[1]) * L2.d[0]) / det;
+    const c = [L1.p[0] + t * L1.d[0], L1.p[1] + t * L1.d[1]];
+    const side = Math.min(dist(quad[s], quad[(s + 1) % 4]), dist(quad[s], quad[(s + 3) % 4]));
+    if (dist(c, quad[s]) > 0.12 * side) return quad;
+    out.push(c);
+  }
+  return out;
+}
+
+/** Clockwise from the top-left, with the first side being a long side (landscape output). */
+function orderCorners(q) {
+  const cx = q.reduce((s, p) => s + p[0], 0) / 4, cy = q.reduce((s, p) => s + p[1], 0) / 4;
+  let pts = q.slice().sort((a, b) => Math.atan2(a[1] - cy, a[0] - cx) - Math.atan2(b[1] - cy, b[0] - cx));
+  let start = 0;
+  for (let i = 1; i < 4; i++) if (pts[i][0] + pts[i][1] < pts[start][0] + pts[start][1]) start = i;
+  pts = pts.slice(start).concat(pts.slice(0, start));
+  const longFirst = dist(pts[0], pts[1]) + dist(pts[2], pts[3]) >= dist(pts[1], pts[2]) + dist(pts[3], pts[0]);
+  return longFirst ? pts : pts.slice(1).concat(pts.slice(0, 1));
+}
+
+function scoreCandidate(quad, hullArea, count, box, w, h) {
+  const area = polyArea(quad);
+  const areaFrac = area / (w * h);
+  if (areaFrac < 0.025 || hullArea <= 0) return 0;
+  const touches = (box.minX <= 1) + (box.minY <= 1) + (box.maxX >= w - 2) + (box.maxY >= h - 2);
+  if (touches >= 2) return 0;
+  const fill = area / hullArea;
+  const solidity = count / hullArea;
+  const a = (dist(quad[0], quad[1]) + dist(quad[2], quad[3])) / 2;
+  const b = (dist(quad[1], quad[2]) + dist(quad[3], quad[0])) / 2;
+  const ratio = Math.max(a, b) / Math.min(a, b);
+  if (ratio < 1.15 || ratio > 2.4) return 0;
+  const ratioScore = Math.exp(-2 * Math.abs(Math.log(ratio / CARD_RATIO)));
+  return fill * Math.min(1, solidity / 0.8) * ratioScore * (1 + 0.5 * Math.min(areaFrac, 0.6)) * (touches ? 0.8 : 1);
+}
+
+/**
+ * Finds the card in an RGBA image (any size; downscaled internally).
+ * Returns { quad: [[x,y]x4] in input pixel coordinates, score } or null.
+ */
+function detectCard(rgba, srcW, srcH) {
+  const maxDim = 480;
+  const scale = Math.min(1, maxDim / Math.max(srcW, srcH));
+  const w = Math.round(srcW * scale), h = Math.round(srcH * scale);
+  let gray;
+  if (scale === 1) {
+    gray = toGray(rgba, w, h);
+  } else {
+    // nearest-neighbour downscale of the RGBA buffer
+    const small = new Uint8ClampedArray(w * h * 4);
+    for (let y = 0; y < h; y++) {
+      const sy = Math.min(srcH - 1, Math.floor(y / scale));
+      for (let x = 0; x < w; x++) {
+        const sx = Math.min(srcW - 1, Math.floor(x / scale));
+        const si = (sy * srcW + sx) * 4, di = (y * w + x) * 4;
+        small[di] = rgba[si]; small[di + 1] = rgba[si + 1]; small[di + 2] = rgba[si + 2];
+      }
+    }
+    gray = toGray(small, w, h);
+  }
+  const blurred = boxBlur(gray, w, h, 2);
+  const t0 = otsu(blurred);
+  const minCount = w * h * 0.015;
+  const candidates = [];
+
+  for (const t of [t0, t0 - 18, t0 + 18]) {
+    {
+      // The Egyptian ID is light, so only light shapes are searched.
+      let mask = new Uint8Array(w * h);
+      for (let i = 0; i < mask.length; i++) mask[i] = blurred[i] > t;
+      // opening breaks thin bridges between the card and the background
+      mask = morph(morph(mask, w, h, true), w, h, true);
+      mask = morph(morph(mask, w, h, false), w, h, false);
+      const { labels, comps } = components(mask, w, h, minCount);
+      comps.sort((a, b) => b.count - a.count);
+      for (const c of comps.slice(0, 3)) {
+        const pts = boundaryPoints(labels, w, h, c.label, c);
+        const hull = convexHull(pts);
+        const raw = maxQuad(hull);
+        if (!raw) continue;
+        const quad = orderCorners(refineQuad(raw, pts));
+        const score = scoreCandidate(quad, polyArea(hull), c.count, c, w, h);
+        if (score >= 0.4) candidates.push({ quad, score, area: polyArea(quad) });
+      }
+    }
+  }
+  if (!candidates.length) return null;
+  // Prefer the largest good shape, so the card wins over the photo or text blocks printed on it.
+  const top = Math.max(...candidates.map((c) => c.score));
+  const best = candidates
+    .filter((c) => c.score >= 0.6 * top)
+    .sort((a, b) => b.area - a.area)[0];
+  return { quad: best.quad.map(([x, y]) => [x / scale, y / scale]), score: best.score };
+}
+
+// ---------- Perspective warp ----------
+
+/** Solves the 3x3 homography H (h33 = 1) with H * from[i] ~ to[i]. */
+function homography(from, to) {
+  const A = [], B = [];
+  for (let i = 0; i < 4; i++) {
+    const [x, y] = from[i], [u, v] = to[i];
+    A.push([x, y, 1, 0, 0, 0, -u * x, -u * y]); B.push(u);
+    A.push([0, 0, 0, x, y, 1, -v * x, -v * y]); B.push(v);
+  }
+  for (let c = 0; c < 8; c++) {
+    let piv = c;
+    for (let r = c + 1; r < 8; r++) if (Math.abs(A[r][c]) > Math.abs(A[piv][c])) piv = r;
+    [A[c], A[piv]] = [A[piv], A[c]]; [B[c], B[piv]] = [B[piv], B[c]];
+    for (let r = 0; r < 8; r++) {
+      if (r === c) continue;
+      const f = A[r][c] / A[c][c];
+      for (let k = c; k < 8; k++) A[r][k] -= f * A[c][k];
+      B[r] -= f * B[c];
+    }
+  }
+  const hv = B.map((b, i) => b / A[i][i]);
+  return [...hv, 1];
+}
+
+/** Warps the quad (clockwise from top-left) of src ImageData into an outW x outH ImageData. */
+function warpQuad(src, quad, outW, outH) {
+  const dst = new ImageData(outW, outH);
+  const H = homography([[0, 0], [outW, 0], [outW, outH], [0, outH]], quad);
+  const s = src.data, d = dst.data, sw = src.width, sh = src.height;
+  for (let y = 0; y < outH; y++) {
+    for (let x = 0; x < outW; x++) {
+      const u = x + 0.5, v = y + 0.5;
+      const z = H[6] * u + H[7] * v + H[8];
+      let sx = (H[0] * u + H[1] * v + H[2]) / z - 0.5;
+      let sy = (H[3] * u + H[4] * v + H[5]) / z - 0.5;
+      sx = Math.min(sw - 1.001, Math.max(0, sx));
+      sy = Math.min(sh - 1.001, Math.max(0, sy));
+      const x0 = sx | 0, y0 = sy | 0, fx = sx - x0, fy = sy - y0;
+      const i00 = (y0 * sw + x0) * 4, i10 = i00 + 4, i01 = i00 + sw * 4, i11 = i01 + 4;
+      const o = (y * outW + x) * 4;
+      for (let c = 0; c < 3; c++) {
+        d[o + c] = (s[i00 + c] * (1 - fx) + s[i10 + c] * fx) * (1 - fy) + (s[i01 + c] * (1 - fx) + s[i11 + c] * fx) * fy;
+      }
+      d[o + 3] = 255;
+    }
+  }
+  return dst;
+}
+
+/** Share of near-white pixels: a rough glare indicator. */
+function glareFraction(img) {
+  const d = img.data;
+  let n = 0;
+  for (let i = 0; i < d.length; i += 4) if (d[i] > 245 && d[i + 1] > 245 && d[i + 2] > 245) n++;
+  return n / (d.length / 4);
+}
+
+// ---------- National ID number parsing and cross-checks ----------
+const GOVERNORATES = {
+  '01': 'Cairo', '02': 'Alexandria', '03': 'Port Said', '04': 'Suez', '11': 'Damietta',
+  '12': 'Dakahlia', '13': 'Sharqia', '14': 'Qalyubia', '15': 'Kafr El Sheikh', '16': 'Gharbia',
+  '17': 'Monufia', '18': 'Beheira', '19': 'Ismailia', '21': 'Giza', '22': 'Beni Suef',
+  '23': 'Fayoum', '24': 'Minya', '25': 'Asyut', '26': 'Sohag', '27': 'Qena', '28': 'Aswan',
+  '29': 'Luxor', '31': 'Red Sea', '32': 'New Valley', '33': 'Matrouh', '34': 'North Sinai',
+  '35': 'South Sinai', '88': 'Born abroad',
+};
+const MIN_AGE_AT_ISSUE = 16;
+
+function toWesternDigits(input) {
+  return String(input ?? '')
+    .replace(/[\u0660-\u0669]/g, (d) => String(d.charCodeAt(0) - 0x0660))
+    .replace(/[\u06f0-\u06f9]/g, (d) => String(d.charCodeAt(0) - 0x06f0))
+    .replace(/\D/g, '');
+}
+function toEasternArabicDigits(input) {
+  return String(input).replace(/[0-9]/g, (d) => String.fromCharCode(0x0660 + Number(d)));
+}
+
+function parseNationalId(raw, today = new Date()) {
+  const digits = toWesternDigits(raw);
+  const r = { digits, isValid: false, errors: [], segments: null, birthDate: null, governorateName: null, gender: null };
+  if (digits.length !== 14) {
+    r.errors.push(`Expected 14 digits but found ${digits.length}.`);
+    return r;
+  }
+  const seg = {
+    century: digits.slice(0, 1), birthDate: digits.slice(1, 7), governorate: digits.slice(7, 9),
+    sequence: digits.slice(9, 13), checkDigit: digits.slice(13),
+  };
+  r.segments = seg;
+  const base = seg.century === '2' ? 1900 : seg.century === '3' ? 2000 : null;
+  if (base === null) {
+    r.errors.push(`First digit must be 2 or 3 (birth century), found ${seg.century}.`);
+  } else {
+    const y = base + Number(seg.birthDate.slice(0, 2)), m = Number(seg.birthDate.slice(2, 4)), d = Number(seg.birthDate.slice(4, 6));
+    const date = new Date(Date.UTC(y, m - 1, d));
+    const real = date.getUTCFullYear() === y && date.getUTCMonth() === m - 1 && date.getUTCDate() === d;
+    if (!real) r.errors.push(`Digits 2–7 (${seg.birthDate}) aren’t a real birth date.`);
+    else if (date > today) r.errors.push('The birth date in the number is in the future.');
+    else r.birthDate = date;
+  }
+  r.governorateName = GOVERNORATES[seg.governorate] ?? null;
+  if (!r.governorateName) r.errors.push(`Governorate code ${seg.governorate} isn’t a known code.`);
+  r.gender = Number(digits[12]) % 2 === 1 ? 'male' : 'female';
+  r.isValid = r.errors.length === 0;
+  return r;
+}
+
+function ageOn(birth, on) {
+  const age = on.getUTCFullYear() - birth.getUTCFullYear();
+  const before = on.getUTCMonth() < birth.getUTCMonth() ||
+    (on.getUTCMonth() === birth.getUTCMonth() && on.getUTCDate() < birth.getUTCDate());
+  return before ? age - 1 : age;
+}
+
+function parseCardDate(value) {
+  if (!value) return null;
+  const m = toWesternDigitsKeepSep(value).match(/^(\d{4})[-/](\d{1,2})(?:[-/](\d{1,2}))?$/);
+  if (!m) return null;
+  const date = new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, m[3] ? Number(m[3]) : 1));
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+function toWesternDigitsKeepSep(s) {
+  return String(s).trim()
+    .replace(/[\u0660-\u0669]/g, (d) => String(d.charCodeAt(0) - 0x0660))
+    .replace(/[\u06f0-\u06f9]/g, (d) => String(d.charCodeAt(0) - 0x06f0));
+}
+
+function runChecks(f, today = new Date()) {
+  const parsed = parseNationalId(f.nationalId, today);
+  const checks = [];
+  checks.push(f.isFrontOfEgyptianId
+    ? { label: 'Front side', status: 'pass', detail: 'Recognized as the front of an Egyptian national ID.' }
+    : { label: 'Front side', status: 'fail', detail: 'This doesn’t look like the front of an Egyptian national ID. Rescan the side with the photo.' });
+  checks.push(f.isBackOfEgyptianId
+    ? { label: 'Back side', status: 'pass', detail: 'Recognized as the back of an Egyptian national ID.' }
+    : { label: 'Back side', status: 'fail', detail: 'This doesn’t look like the back of an Egyptian national ID. Rescan the side with the dates.' });
+  checks.push({
+    label: 'ID number structure', status: parsed.isValid ? 'pass' : 'fail',
+    detail: parsed.isValid ? '14 digits with a valid birth date and governorate code.' : parsed.errors.join(' '),
+  });
+  if (parsed.gender && f.gender) {
+    const ok = parsed.gender === f.gender;
+    checks.push({
+      label: 'Gender', status: ok ? 'pass' : 'fail',
+      detail: ok ? `The ID number and the back of the card both say ${f.gender}.`
+        : `The ID number says ${parsed.gender}, but the back of the card says ${f.gender}. One of them was misread.`,
+    });
+  }
+  const expiry = parseCardDate(f.expiryDate);
+  if (expiry) {
+    const expired = expiry < today;
+    checks.push({ label: 'Expiry', status: expired ? 'fail' : 'pass',
+      detail: expired ? `The card expired on ${f.expiryDate}.` : `Valid until ${f.expiryDate}.` });
+  } else {
+    checks.push({ label: 'Expiry', status: 'warn', detail: 'The expiry date couldn’t be read. Rescan the back in better light.' });
+  }
+  const issue = parseCardDate(f.issueDate);
+  if (issue && parsed.birthDate) {
+    const age = ageOn(parsed.birthDate, issue);
+    checks.push({ label: 'Age at issue', status: age >= MIN_AGE_AT_ISSUE ? 'pass' : 'warn',
+      detail: age >= MIN_AGE_AT_ISSUE ? `Holder was ${age} when the card was issued.`
+        : `Holder would have been ${age} at issue, below the minimum of ${MIN_AGE_AT_ISSUE}. Check the ID number and issue date.` });
+  }
+  if (issue && expiry && issue >= expiry) {
+    checks.push({ label: 'Date order', status: 'fail', detail: 'The issue date is on or after the expiry date. One of them was misread.' });
+  }
+  if (f.unreadableFields.length) {
+    checks.push({ label: 'Unreadable fields', status: 'warn', detail: `Couldn’t read: ${f.unreadableFields.join(', ')}.` });
+  }
+  return { parsed, checks };
+}
+
+// ---------- Settings ----------
+// Optional: paste a free Gemini API key from https://aistudio.google.com/apikey between the quotes
+// to also read the name, ID number and dates. Leave it empty to test auto-capture only.
+const GEMINI_API_KEY = '';
+const GEMINI_MODEL = 'gemini-flash-latest';
+
+// ---------- App ----------
+const $ = (id) => document.getElementById(id);
+const OUT_W = 1000, OUT_H = Math.round(1000 / CARD_RATIO);
+const params = new URLSearchParams(location.search);
+const DEBUG = params.has('debug');
+
+// Auto-capture thresholds. Any of them can be overridden from the link, e.g. ?minSharp=20&debug=1
+const CFG = {
+  detectMax: 640,     // longest side of the frame used for detection, in pixels
+  intervalMs: 110,    // time between checks
+  minFill: 0.55,      // card area / guide area: below this, "Move closer"
+  maxFill: 1.3,       // above this, "Move back"
+  cornerTol: 0.07,    // how far a corner may sit outside the guide, as a share of the guide width
+  ratioTol: 0.12,     // allowed difference from the 85.6 x 54 mm card ratio
+  angleTol: 13,       // allowed degrees away from 90 at each corner (tilted phone)
+  minLuma: 75,        // average brightness of the card, 0-255
+  maxLuma: 235,
+  maxGlare: 0.02,     // share of near-white pixels on the card
+  minSharp: 30,       // Laplacian variance of the card: below this, blurry
+  maxMove: 0.018,     // corner movement between checks, as a share of the guide width
+  stableFrames: 7,    // good checks in a row before capturing (about 0.8 s)
+};
+for (const k of Object.keys(CFG)) {
+  if (params.has(k)) { const v = Number(params.get(k)); if (Number.isFinite(v)) CFG[k] = v; }
+}
+
+const state = {
+  sides: { front: null, back: null },   // { blob, url, glare, metrics }
+  cam: null,                             // live camera session
+  review: null,                          // { side, src, quad }
+  controller: null,
+};
+
+const SIDE_NAME = { front: 'Front', back: 'Back' };
+const SCREENS = ['scan', 'camera', 'review', 'result'];
+
+function show(screen) {
+  for (const s of SCREENS) $(`screen-${s}`).hidden = s !== screen;
+  document.body.classList.toggle('cam-open', screen === 'camera');
+  window.scrollTo(0, 0);
+}
+
+function el(tag, attrs = {}, ...children) {
+  const node = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) {
+    if (k === 'class') node.className = v;
+    else if (k === 'dir') node.dir = v;
+    else node.setAttribute(k, v);
+  }
+  for (const c of children) if (c != null) node.append(c);
+  return node;
+}
+
+function showError(message) {
+  const box = $('error');
+  box.textContent = message ?? '';
+  box.hidden = !message;
+}
+
+// ---------- Camera ----------
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+async function waitFor(test, ms) {
+  const end = performance.now() + ms;
+  while (!test() && performance.now() < end) await sleep(50);
+  return test();
+}
+
+function setStatus(text, tone) {
+  const s = $('cam-status');
+  s.textContent = text;
+  s.className = `cam-status ${tone || ''}`;
+}
+
+async function startCamera(side) {
+  showError(null);
+  if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia) {
+    showError('The camera only works when this page is opened over https, in Safari or Chrome.');
+    return;
+  }
+  $('cam-side').textContent = SIDE_NAME[side];
+  $('cam-progress').style.width = '0%';
+  $('cam-metrics').hidden = !DEBUG;
+  setStatus('Starting the camera…', '');
+  show('camera');
+  let stream;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({
+      audio: false,
+      video: { facingMode: { ideal: 'environment' }, width: { ideal: 1920 }, height: { ideal: 1080 } },
+    });
+  } catch (e) {
+    show('scan');
+    showError(e?.name === 'NotAllowedError'
+      ? 'Camera access is blocked. In Safari tap aA in the address bar, open Website Settings and allow Camera, then try again.'
+      : 'The camera couldn’t be opened. Close other apps that use the camera and try again.');
+    return;
+  }
+  const video = $('video');
+  video.srcObject = stream;
+  try { await video.play(); } catch { /* playsinline + muted normally allows autoplay */ }
+  if (!(await waitFor(() => video.videoWidth > 0, 5000))) {
+    stream.getTracks().forEach((t) => t.stop());
+    show('scan');
+    showError('The camera didn’t start. Try again.');
+    return;
+  }
+  state.cam = { side, stream, prev: null, good: 0, timer: 0, small: document.createElement('canvas') };
+  setStatus('Place the card inside the frame', '');
+  tick();
+}
+
+function stopCamera() {
+  const c = state.cam;
+  if (!c) return;
+  clearTimeout(c.timer);
+  c.stream.getTracks().forEach((t) => t.stop());
+  $('video').srcObject = null;
+  state.cam = null;
+}
+
+$('cam-close').addEventListener('click', () => { stopCamera(); show('scan'); });
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden && state.cam) { stopCamera(); show('scan'); }
+});
+
+function tick() {
+  const c = state.cam;
+  if (!c) return;
+  const t0 = performance.now();
+  try { analyze(c); } catch (e) { console.error(e); }
+  if (state.cam !== c) return;
+  c.timer = setTimeout(tick, Math.max(30, CFG.intervalMs - (performance.now() - t0)));
+}
+
+/** Screen layout: how the video is cropped to fill the screen, and where the card guide sits. */
+function geometry() {
+  const video = $('video'), ov = $('overlay');
+  const W = ov.clientWidth, H = ov.clientHeight, vw = video.videoWidth, vh = video.videoHeight;
+  const s = Math.max(W / vw, H / vh);
+  const ox = (W - vw * s) / 2, oy = (H - vh * s) / 2;
+  const gw = Math.min(W * 0.88, H * 0.45 * CARD_RATIO);
+  const gh = gw / CARD_RATIO;
+  return { W, H, vw, vh, s, ox, oy, guide: { x: (W - gw) / 2, y: (H - gh) / 2 - H * 0.03, w: gw, h: gh } };
+}
+
+function analyze(c) {
+  const g = geometry();
+  const video = $('video');
+  const k = Math.min(1, CFG.detectMax / Math.max(g.vw, g.vh));
+  const sw = Math.round(g.vw * k), sh = Math.round(g.vh * k);
+  const cv = c.small;
+  if (cv.width !== sw || cv.height !== sh) { cv.width = sw; cv.height = sh; }
+  const ctx = cv.getContext('2d', { willReadFrequently: true });
+  ctx.drawImage(video, 0, 0, sw, sh);
+  const img = ctx.getImageData(0, 0, sw, sh);
+
+  // the guide in detection-frame pixels
+  const G = {
+    x: ((g.guide.x - g.ox) / g.s) * k, y: ((g.guide.y - g.oy) / g.s) * k,
+    w: (g.guide.w / g.s) * k, h: (g.guide.h / g.s) * k,
+  };
+  const found = detectCard(img.data, sw, sh);
+  const verdict = found ? judge(found.quad, G, img) : { ok: false, msg: 'Place the card inside the frame', tone: '' };
+  if (verdict.ok && c.prev) {
+    const move = Math.max(...found.quad.map((p, i) => dist(p, c.prev[i]))) / G.w;
+    if (move > CFG.maxMove) Object.assign(verdict, { ok: false, msg: 'Hold still', tone: 'near' });
+  }
+  c.prev = found ? found.quad : null;
+  c.good = verdict.ok ? c.good + 1 : 0;
+  c.metrics = verdict.metrics;
+
+  const viewQuad = found ? found.quad.map(([x, y]) => [(x / k) * g.s + g.ox, (y / k) * g.s + g.oy]) : null;
+  drawOverlay(g, viewQuad, verdict);
+  $('cam-progress').style.width = `${Math.min(100, (c.good / CFG.stableFrames) * 100)}%`;
+  setStatus(verdict.ok ? 'Hold still…' : verdict.msg, verdict.ok ? 'good' : verdict.tone);
+  if (DEBUG) $('cam-metrics').textContent = verdict.metrics || 'no card found';
+  if (c.good >= CFG.stableFrames) capture(c, found.quad, k);
+}
+
+function cornerAngleError(quad) {
+  return Math.max(...quad.map((p, i) => {
+    const a = quad[(i + 3) % 4], b = quad[(i + 1) % 4];
+    const v1 = [a[0] - p[0], a[1] - p[1]], v2 = [b[0] - p[0], b[1] - p[1]];
+    const cos = (v1[0] * v2[0] + v1[1] * v2[1]) / (Math.hypot(...v1) * Math.hypot(...v2));
+    return Math.abs((Math.acos(Math.max(-1, Math.min(1, cos))) * 180) / Math.PI - 90);
+  }));
+}
+
+/** Brightness, glare and sharpness of the card itself, measured on a small straightened copy. */
+function measureLight(img, quad) {
+  const w = 200, h = 126;
+  const d = warpQuad(img, quad, w, h).data;
+  const g = new Float32Array(w * h);
+  let sum = 0, glare = 0;
+  for (let i = 0, j = 0; i < g.length; i++, j += 4) {
+    const v = (d[j] * 77 + d[j + 1] * 150 + d[j + 2] * 29) / 256;
+    g[i] = v; sum += v;
+    if (d[j] > 245 && d[j + 1] > 245 && d[j + 2] > 245) glare++;
+  }
+  let n = 0, m = 0, m2 = 0;
+  for (let y = 3; y < h - 3; y++) {
+    for (let x = 3; x < w - 3; x++) {
+      const i = y * w + x;
+      const L = 4 * g[i] - g[i - 1] - g[i + 1] - g[i - w] - g[i + w];
+      n++; m += L; m2 += L * L;
+    }
+  }
+  m /= n;
+  return { luma: sum / g.length, glare: glare / g.length, sharp: m2 / n - m * m };
+}
+
+function judge(quad, G, img) {
+  const tol = CFG.cornerTol * G.w;
+  const inside = quad.every(([x, y]) =>
+    x >= G.x - tol && x <= G.x + G.w + tol && y >= G.y - tol && y <= G.y + G.h + tol);
+  const fill = polyArea(quad) / (G.w * G.h);
+  const a = (dist(quad[0], quad[1]) + dist(quad[2], quad[3])) / 2;
+  const b = (dist(quad[1], quad[2]) + dist(quad[3], quad[0])) / 2;
+  const ratio = a / b;
+  const sideways = Math.abs(quad[1][0] - quad[0][0]) >= Math.abs(quad[1][1] - quad[0][1]);
+  const angle = cornerAngleError(quad);
+  const L = measureLight(img, quad);
+  const metrics = `fill ${fill.toFixed(2)} · ratio ${ratio.toFixed(2)} · angle ±${angle.toFixed(0)}° · `
+    + `light ${L.luma.toFixed(0)} · glare ${(L.glare * 100).toFixed(1)}% · sharp ${L.sharp.toFixed(0)}`;
+  const fail = (msg, tone = 'near') => ({ ok: false, msg, tone, metrics });
+  if (!sideways) return fail('Turn the card sideways to fit the frame');
+  if (fill < CFG.minFill) return fail('Move closer');
+  if (fill > CFG.maxFill) return fail('Move back a little');
+  if (!inside) return fail('Center the card inside the frame');
+  if (Math.abs(ratio / CARD_RATIO - 1) > CFG.ratioTol || angle > CFG.angleTol) return fail('Hold the phone flat above the card');
+  if (L.luma < CFG.minLuma) return fail('Too dark. Move to better light');
+  if (L.luma > CFG.maxLuma) return fail('Too bright. Move out of direct light');
+  if (L.glare > CFG.maxGlare) return fail('Glare on the card. Tilt it away from the light');
+  if (L.sharp < CFG.minSharp) return fail('Hold still, the image is blurry');
+  return { ok: true, metrics };
+}
+
+function roundRectPath(ctx, x, y, w, h, r) {
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
+}
+
+function drawOverlay(g, q, verdict) {
+  const ov = $('overlay');
+  const dpr = window.devicePixelRatio || 1;
+  const pw = Math.round(g.W * dpr), ph = Math.round(g.H * dpr);
+  if (ov.width !== pw || ov.height !== ph) { ov.width = pw; ov.height = ph; }
+  const ctx = ov.getContext('2d');
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, g.W, g.H);
+  const { x, y, w, h } = g.guide;
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.55)';
+  ctx.beginPath();
+  ctx.rect(0, 0, g.W, g.H);
+  roundRectPath(ctx, x, y, w, h, 16);
+  ctx.fill('evenodd');
+  const color = verdict.ok ? '#3DDC84' : q ? '#FFC24B' : '#FFFFFF';
+  ctx.lineWidth = 3;
+  ctx.strokeStyle = color;
+  ctx.beginPath();
+  roundRectPath(ctx, x, y, w, h, 16);
+  ctx.stroke();
+  if (q) {
+    ctx.lineWidth = 2;
+    ctx.setLineDash([7, 6]);
+    ctx.beginPath();
+    ctx.moveTo(...q[0]);
+    for (let i = 1; i < 4; i++) ctx.lineTo(...q[i]);
+    ctx.closePath();
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+}
+
+function flash() {
+  const f = $('flash');
+  f.classList.remove('on');
+  void f.offsetWidth;
+  f.classList.add('on');
+}
+
+function capture(c, quadSmall, k) {
+  const video = $('video');
+  const full = document.createElement('canvas');
+  full.width = video.videoWidth;
+  full.height = video.videoHeight;
+  const fctx = full.getContext('2d');
+  fctx.drawImage(video, 0, 0);
+  const side = c.side;
+  stopCamera();
+  flash();
+  const src = fctx.getImageData(0, 0, full.width, full.height);
+  openReview(side, src, quadSmall.map(([x, y]) => [x / k, y / k]), c.metrics);
+}
+
+// ---------- Review: check the straightened photo, then move on ----------
+function renderReview() {
+  const r = state.review;
+  const out = warpQuad(r.src, r.quad, OUT_W, OUT_H);
+  const cv = $('review-canvas');
+  cv.width = OUT_W; cv.height = OUT_H;
+  cv.getContext('2d').putImageData(out, 0, 0);
+  r.out = out;
+  $('review-warn').hidden = glareFraction(out) <= 0.04;
+}
+
+function openReview(side, src, quad, metrics) {
+  state.review = { side, src, quad, metrics };
+  $('review-title').textContent = `${SIDE_NAME[side]} captured`;
+  $('review-use').textContent = side === 'front' ? 'Use this and scan the back' : 'Use this and see results';
+  renderReview();
+  show('review');
+}
+
+$('review-turn').addEventListener('click', () => {
+  const r = state.review; if (!r) return;
+  r.quad = r.quad.slice(2).concat(r.quad.slice(0, 2));
+  renderReview();
+});
+$('review-retake').addEventListener('click', () => {
+  const side = state.review?.side;
+  state.review = null;
+  if (side) startCamera(side);
+});
+$('review-use').addEventListener('click', async () => {
+  const r = state.review; if (!r) return;
+  const blob = await new Promise((res) => $('review-canvas').toBlob(res, 'image/jpeg', 0.9));
+  if (state.sides[r.side]) URL.revokeObjectURL(state.sides[r.side].url);
+  state.sides[r.side] = { blob, url: URL.createObjectURL(blob), glare: glareFraction(r.out), metrics: r.metrics };
+  state.review = null;
+  if (r.side === 'front') startCamera('back');
+  else showResults();
+});
+
+$('start').addEventListener('click', () => {
+  for (const s of ['front', 'back']) if (state.sides[s]) URL.revokeObjectURL(state.sides[s].url);
+  state.sides = { front: null, back: null };
+  startCamera('front');
+});
+$('again').addEventListener('click', () => { state.controller?.abort(); $('start').click(); });
+
+// ---------- Results ----------
+function captureSection() {
+  const list = el('ul', { class: 'checks' });
+  for (const side of ['front', 'back']) {
+    const s = state.sides[side];
+    list.append(el('li', { class: 'check pass' },
+      el('span', { class: 'badge', 'aria-label': 'pass' }, '✓'),
+      el('div', {}, el('strong', {}, `${SIDE_NAME[side]} auto-captured`),
+        el('p', { class: 'metrics-line' }, s.metrics || ''))));
+  }
+  return el('section', {}, el('h2', {}, 'Capture'), list);
+}
+
+function imagesSection() {
+  const imgs = el('div', { class: 'thumbs' });
+  imgs.append(el('img', { src: state.sides.front.url, alt: 'Front of the card, straightened' }),
+    el('img', { src: state.sides.back.url, alt: 'Back of the card, straightened' }));
+  return el('section', {}, el('h2', {}, 'Straightened images'), imgs);
+}
+
+async function showResults() {
+  const root = $('result-body');
+  root.replaceChildren();
+  show('result');
+  if (!GEMINI_API_KEY) {
+    root.append(
+      el('header', { class: 'result-head' }, el('h1', {}, 'Card captured'),
+        el('p', { class: 'summary pass' }, 'Both sides were captured automatically')),
+      captureSection(), imagesSection(),
+      el('p', { class: 'hint', style: 'text-align:left' }, 'Reading the name and ID number is off. Add a Gemini API key to the file to turn it on.'));
+    return;
+  }
+  const reading = el('div', { class: 'reading' }, el('span', { class: 'spinner', 'aria-hidden': 'true' }),
+    el('span', {}, 'Reading the card, this can take up to 30 seconds'));
+  root.append(el('header', { class: 'result-head' }, el('h1', {}, 'Card captured')), reading, captureSection(), imagesSection());
+  state.controller = new AbortController();
+  try {
+    const raw = await readWithGemini(state.sides.front.blob, state.sides.back.blob, state.controller.signal);
+    renderResult({ front: state.sides.front, back: state.sides.back, fields: normalizeFields(raw) });
+    root.insertBefore(captureSection(), root.querySelector('section:last-of-type'));
+  } catch (e) {
+    if (e?.name === 'AbortError') return;
+    reading.replaceWith(el('p', { class: 'error' }, `The card couldn’t be read: ${e?.message || 'unknown error'}. The captured images are below.`));
+  } finally {
+    state.controller = null;
+  }
+}
+
+// ---------- Reading with Gemini (optional) ----------
+function blobToBase64(blob) {
+  return new Promise((resolve, reject) => {
+    const fr = new FileReader();
+    fr.onload = () => resolve(String(fr.result).split(',')[1]);
+    fr.onerror = () => reject(fr.error);
+    fr.readAsDataURL(blob);
+  });
+}
+
+const FIELD_PROMPT = `You are reading an Egyptian national ID card for an identity-verification test the card holder agreed to.
+The first image is the front of the card and the second image is the back.
+Read only what is printed. Never guess or fill in. If a field is not on the card, use null. If it is on the card but unclear, use null and add its key to unreadableFields.
+The ID number is printed in Eastern Arabic digits (٠١٢٣٤٥٦٧٨٩). Convert it digit by digit to 0-9 and check each digit twice.
+Do not read or return the religion field.
+
+Reply with only this JSON object:
+{
+  "isFrontOfEgyptianId": boolean,
+  "isBackOfEgyptianId": boolean,
+  "firstName": string|null,        // first name line on the front, Arabic as printed
+  "familyName": string|null,       // the rest of the name (second line), Arabic as printed
+  "address": string|null,          // full address on the front, lines joined with a space, Arabic
+  "nationalId": string|null,       // 14 digits, Western 0-9, no spaces
+  "cardSerial": string|null,       // card serial / factory number on the front, exactly as printed
+  "issueDate": string|null,        // from the back, "YYYY-MM" or "YYYY-MM-DD", Western digits
+  "expiryDate": string|null,       // from the back (after البطاقة سارية حتى), "YYYY-MM-DD", Western digits
+  "profession": string|null,       // from the back, Arabic as printed
+  "gender": "male"|"female"|null,  // from the back: ذكر = male, أنثى = female
+  "maritalStatus": string|null,    // from the back, Arabic as printed
+  "husbandName": string|null,      // from the back if printed, otherwise null
+  "unreadableFields": string[]     // keys of fields present but not readable
+}`;
+
+async function readWithGemini(frontBlob, backBlob, signal) {
+  const [front, back] = await Promise.all([blobToBase64(frontBlob), blobToBase64(backBlob)]);
+  const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-goog-api-key': GEMINI_API_KEY },
+    signal,
+    body: JSON.stringify({
+      contents: [{ role: 'user', parts: [
+        { text: FIELD_PROMPT },
+        { inline_data: { mime_type: 'image/jpeg', data: front } },
+        { inline_data: { mime_type: 'image/jpeg', data: back } },
+      ] }],
+      generationConfig: { responseMimeType: 'application/json', temperature: 0 },
+    }),
+  });
+  const data = await res.json().catch(() => null);
+  if (!res.ok) throw new Error(data?.error?.message || `HTTP ${res.status}`);
+  const text = (data?.candidates?.[0]?.content?.parts || []).map((p) => p.text || '').join('');
+  const start = text.indexOf('{'), end = text.lastIndexOf('}');
+  if (start < 0 || end < start) throw new Error('the answer had no card fields');
+  return JSON.parse(text.slice(start, end + 1));
+}
+
+function normalizeFields(o) {
+  const str = (v) => (typeof v === 'string' && v.trim() ? v.trim() : null);
+  const id = str(o?.nationalId);
+  return {
+    isFrontOfEgyptianId: o?.isFrontOfEgyptianId === true,
+    isBackOfEgyptianId: o?.isBackOfEgyptianId === true,
+    firstName: str(o?.firstName),
+    familyName: str(o?.familyName),
+    address: str(o?.address),
+    nationalId: id ? toWesternDigits(id) : null,
+    cardSerial: str(o?.cardSerial),
+    issueDate: str(o?.issueDate),
+    expiryDate: str(o?.expiryDate),
+    profession: str(o?.profession),
+    gender: o?.gender === 'male' || o?.gender === 'female' ? o.gender : null,
+    maritalStatus: str(o?.maritalStatus),
+    husbandName: str(o?.husbandName),
+    unreadableFields: Array.isArray(o?.unreadableFields) ? o.unreadableFields.filter((x) => typeof x === 'string') : [],
+  };
+}
+
+
+// ---------- Result screen ----------
+const dateFmt = new Intl.DateTimeFormat('en-GB', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' });
+const genderAr = { male: 'ذكر', female: 'أنثى' };
+
+function idBreakdown(parsed) {
+  const box = el('div', { class: 'idnum' });
+  if (!parsed.segments) {
+    box.append(
+      el('div', { class: 'digits bad' }, parsed.digits ? toEasternArabicDigits(parsed.digits) : '—'),
+      el('p', { class: 'idnum-error' }, parsed.errors.join(' ')),
+    );
+    return box;
+  }
+  const s = parsed.segments;
+  const groups = [
+    [s.century, s.century === '3' ? '2000s' : '1900s'],
+    [s.birthDate, parsed.birthDate ? dateFmt.format(parsed.birthDate) : 'Invalid date'],
+    [s.governorate, parsed.governorateName ?? 'Unknown'],
+    [s.sequence, parsed.gender === 'male' ? 'Male' : 'Female'],
+    [s.checkDigit, 'Check'],
+  ];
+  const row = el('div', { class: 'idnum-row', dir: 'ltr' });
+  for (const [d, cap] of groups) {
+    row.append(el('div', { class: 'seg' },
+      el('span', { class: `digits${parsed.isValid ? '' : ' bad'}` }, toEasternArabicDigits(d)),
+      el('span', { class: 'seg-cap' }, cap)));
+  }
+  box.append(row, el('p', { class: 'idnum-western', dir: 'ltr' }, parsed.digits));
+  if (!parsed.isValid) box.append(el('p', { class: 'idnum-error' }, parsed.errors.join(' ')));
+  return box;
+}
+
+function fieldRows(rows) {
+  const dl = el('dl', { class: 'fields' });
+  for (const [label, value, arabic] of rows) {
+    if (value === undefined) continue;
+    dl.append(el('div', { class: 'field' },
+      el('dt', {}, label),
+      el('dd', { class: value ? (arabic ? 'ar' : '') : 'missing', dir: value && arabic ? 'rtl' : 'auto' }, value ?? 'Not read')));
+  }
+  return dl;
+}
+
+function renderResult(entry) {
+  const f = entry.fields;
+  const { parsed, checks } = runChecks(f);
+  const fails = checks.filter((c) => c.status === 'fail').length;
+  const warns = checks.filter((c) => c.status === 'warn').length;
+  const root = $('result-body');
+  root.replaceChildren();
+
+  const name = [f.firstName, f.familyName].filter(Boolean).join(' ');
+  const summary = fails ? `${fails} ${fails === 1 ? 'check' : 'checks'} failed`
+    : warns ? `All checks passed, ${warns} to review` : 'All checks passed';
+  root.append(el('header', { class: 'result-head' },
+    el('h1', { class: name ? 'ar name' : 'name', dir: name ? 'rtl' : 'auto' }, name || 'Name not read'),
+    el('p', { class: `summary ${fails ? 'fail' : warns ? 'warn' : 'pass'}` }, summary)));
+
+  root.append(idBreakdown(parsed));
+
+  const list = el('ul', { class: 'checks' });
+  const mark = { pass: '✓', warn: '!', fail: '✕' };
+  for (const c of checks) {
+    list.append(el('li', { class: `check ${c.status}` },
+      el('span', { class: 'badge', 'aria-label': c.status }, mark[c.status]),
+      el('div', {}, el('strong', {}, c.label), el('p', {}, c.detail))));
+  }
+  root.append(el('section', {}, el('h2', {}, 'Checks'), list));
+
+  root.append(el('section', {}, el('h2', {}, 'Front'), fieldRows([
+    ['First name', f.firstName, true],
+    ['Family name', f.familyName, true],
+    ['Address', f.address, true],
+    ['Card serial', f.cardSerial, false],
+  ])));
+  root.append(el('section', {}, el('h2', {}, 'Back'), fieldRows([
+    ['Issue date', f.issueDate, false],
+    ['Expiry date', f.expiryDate, false],
+    ['Profession', f.profession, true],
+    ['Gender', f.gender ? genderAr[f.gender] : null, true],
+    ['Marital status', f.maritalStatus, true],
+    ['Husband’s name', f.husbandName ?? undefined, true],
+  ])));
+
+  const imgs = el('div', { class: 'thumbs' });
+  imgs.append(el('img', { src: entry.front.url, alt: 'Front of the card, straightened' }),
+    el('img', { src: entry.back.url, alt: 'Back of the card, straightened' }));
+  root.append(el('section', {}, el('h2', {}, 'Straightened images'), imgs));
+}
+
+</script>
+</body>
+</html>
