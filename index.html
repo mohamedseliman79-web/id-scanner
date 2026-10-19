@@ -194,14 +194,14 @@ button.slot { font: inherit; color: inherit; padding: 0; text-align: center; }
     <p id="error" class="error" role="alert" hidden></p>
     <button id="start" class="btn primary" type="button">Start</button>
     <details class="key-box" id="key-box">
-      <summary id="key-summary">Read all details with Gemini (optional)</summary>
-      <p class="hint" style="text-align:left">Without a key, only the ID number is read, on this phone. With a free Gemini key, the name, address, dates and other fields are read too. Get a key at <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">aistudio.google.com/apikey</a>. It’s saved only on this phone.</p>
-      <p class="hint" style="text-align:left">On Google’s free tier the photos may be used to improve Google’s products. Only scan cards whose owners agree.</p>
-      <label for="key-input" class="vh-label">Gemini API key</label>
+      <summary id="key-summary">Read all details with AI (optional)</summary>
+      <p class="hint" style="text-align:left">Without a key, only the ID number is read, on this phone. With a Gemini key (from <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">aistudio.google.com/apikey</a>) or an OpenRouter key (starts with sk-or-), the name, address, dates and other fields are read too. The key is saved only on this phone.</p>
+      <p class="hint" style="text-align:left">Free AI services may keep the photos and use them to improve their models. Only scan cards whose owners agree.</p>
+      <label for="key-input" class="vh-label">Gemini or OpenRouter API key</label>
       <div class="row"><input id="key-input" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Paste your Gemini API key"><button id="key-save" class="btn primary" type="button">Save</button></div>
       <button id="key-remove" class="link" type="button" hidden>Remove the key from this phone</button>
     </details>
-    <p class="hint">Version 5</p>
+    <p class="hint">Version 6</p>
   </section>
 
   <section id="screen-camera" class="camera" hidden>
@@ -720,6 +720,8 @@ function runChecks(f, today = new Date()) {
 // Reading: the ID number is always read on the phone. Full reading with Gemini switches on when a
 // Gemini API key is entered on the start screen; the key is kept only in that phone's browser.
 const GEMINI_MODEL = 'gemini-3.6-flash';
+const OPENROUTER_MODEL = 'openrouter/free'; // OpenRouter's router over its free models that accept images
+const isOpenRouterKey = (k) => /^sk-or-/.test(k);
 const KEY_STORE = 'idscanner.geminiKey';
 function geminiKey() { try { return localStorage.getItem(KEY_STORE) || ''; } catch { return ''; } }
 function setGeminiKey(v) { try { v ? localStorage.setItem(KEY_STORE, v) : localStorage.removeItem(KEY_STORE); } catch { /* storage blocked */ } }
@@ -1206,10 +1208,10 @@ $('review-use').addEventListener('click', async () => {
 setTimeout(loadFaceDetector, 300);
 function renderKeyBox() {
   const has = !!geminiKey();
-  $('key-summary').textContent = has ? 'Gemini reading is on for this phone' : 'Read all details with Gemini (optional)';
+  $('key-summary').textContent = has ? `AI reading is on for this phone (${isOpenRouterKey(geminiKey()) ? 'OpenRouter' : 'Gemini'})` : 'Read all details with AI (optional)';
   $('key-remove').hidden = !has;
   $('key-input').value = '';
-  $('key-input').placeholder = has ? 'Key saved. Paste a new one to replace it' : 'Paste your Gemini API key';
+  $('key-input').placeholder = has ? 'Key saved. Paste a new one to replace it' : 'Paste a Gemini or OpenRouter key';
 }
 $('key-save').addEventListener('click', () => {
   const v = $('key-input').value.trim();
@@ -1255,7 +1257,7 @@ async function showResults() {
   root.replaceChildren();
   show('result');
   const reading = el('div', { class: 'reading' }, el('span', { class: 'spinner', 'aria-hidden': 'true' }),
-    el('span', {}, geminiKey() ? 'Reading the card with Gemini, this can take up to 30 seconds' : 'Reading the ID number on this phone…'));
+    el('span', {}, geminiKey() ? 'Reading the card with AI, this can take up to 30 seconds' : 'Reading the ID number on this phone…'));
   root.append(el('header', { class: 'result-head' }, el('h1', {}, 'Card captured')), reading, captureSection(), imagesSection());
   state.controller = new AbortController();
   const signal = state.controller.signal;
@@ -1301,7 +1303,7 @@ function renderOnPhoneResult(digits, geminiError) {
   root.append(el('header', { class: 'result-head' },
     el('h1', {}, parsed.isValid ? 'ID number read' : 'ID number not read'),
     el('p', { class: `summary ${fails ? 'fail' : 'pass'}` }, parsed.isValid ? 'Read on this phone, nothing was sent anywhere' : 'Read on this phone')));
-  if (geminiError) root.append(el('p', { class: 'error' }, `Gemini couldn’t read the card (${geminiError}), so only the ID number was read on the phone.`));
+  if (geminiError) root.append(el('p', { class: 'error' }, `The AI couldn’t read the card (${geminiError}), so only the ID number was read on the phone.`));
   root.append(idBreakdown(parsed));
   const list = el('ul', { class: 'checks' });
   const mark = { pass: '✓', warn: '!', fail: '✕' };
@@ -1318,7 +1320,7 @@ function renderOnPhoneResult(digits, geminiError) {
       ['Gender', parsed.gender === 'male' ? 'Male' : 'Female', false],
     ])));
   }
-  if (!geminiKey()) root.append(el('p', { class: 'hint', style: 'text-align:left' }, 'Name, address and dates need Gemini. Add a key on the start screen to read them.'));
+  if (!geminiKey()) root.append(el('p', { class: 'hint', style: 'text-align:left' }, 'Name, address and dates need AI reading. Add a key on the start screen to read them.'));
   root.append(captureSection(), imagesSection());
 }
 
@@ -1427,8 +1429,37 @@ Reply with only this JSON object:
   "unreadableFields": string[]     // keys of fields present but not readable
 }`;
 
+function parseJsonReply(text) {
+  const start = text.indexOf('{'), end = text.lastIndexOf('}');
+  if (start < 0 || end < start) throw new Error('the answer had no card fields');
+  return JSON.parse(text.slice(start, end + 1));
+}
+
+async function readWithOpenRouter(front, back, signal) {
+  const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: `Bearer ${geminiKey()}`, 'X-Title': 'Egyptian ID Scanner' },
+    signal,
+    body: JSON.stringify({
+      model: OPENROUTER_MODEL,
+      temperature: 0,
+      messages: [{ role: 'user', content: [
+        { type: 'text', text: FIELD_PROMPT },
+        { type: 'image_url', image_url: { url: `data:image/jpeg;base64,${front}` } },
+        { type: 'image_url', image_url: { url: `data:image/jpeg;base64,${back}` } },
+      ] }],
+    }),
+  });
+  const data = await res.json().catch(() => null);
+  if (!res.ok) throw new Error(data?.error?.message || `HTTP ${res.status}`);
+  const msg = data?.choices?.[0]?.message?.content;
+  const text = Array.isArray(msg) ? msg.map((p) => p.text || '').join('') : String(msg || '');
+  return parseJsonReply(text);
+}
+
 async function readWithGemini(frontBlob, backBlob, signal) {
   const [front, back] = await Promise.all([blobToBase64(frontBlob), blobToBase64(backBlob)]);
+  if (isOpenRouterKey(geminiKey())) return readWithOpenRouter(front, back, signal);
   const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`, {
     method: 'POST',
     headers: { 'content-type': 'application/json', 'x-goog-api-key': geminiKey() },
@@ -1445,9 +1476,7 @@ async function readWithGemini(frontBlob, backBlob, signal) {
   const data = await res.json().catch(() => null);
   if (!res.ok) throw new Error(data?.error?.message || `HTTP ${res.status}`);
   const text = (data?.candidates?.[0]?.content?.parts || []).map((p) => p.text || '').join('');
-  const start = text.indexOf('{'), end = text.lastIndexOf('}');
-  if (start < 0 || end < start) throw new Error('the answer had no card fields');
-  return JSON.parse(text.slice(start, end + 1));
+  return parseJsonReply(text);
 }
 
 function normalizeFields(o) {
