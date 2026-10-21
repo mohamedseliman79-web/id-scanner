@@ -201,7 +201,7 @@ button.slot { font: inherit; color: inherit; padding: 0; text-align: center; }
       <div class="row"><input id="key-input" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Paste your Gemini API key"><button id="key-save" class="btn primary" type="button">Save</button></div>
       <button id="key-remove" class="link" type="button" hidden>Remove the key from this phone</button>
     </details>
-    <p class="hint">Version 12</p>
+    <p class="hint">Version 13</p>
   </section>
 
   <section id="screen-camera" class="camera" hidden>
@@ -766,10 +766,16 @@ const CFG = {
   edgeCover: 0.5,     // share of each side where that jump must be found    // good checks in a row before capturing (about 0.8 s)
   // Document check (runs once the photo quality passes)
   idMinBright: 110,   // the Egyptian ID has a pale background: median brightness, 0-255
-  idMaxSat: 0.32,     // and little colour: average saturation, 0-1
+  idMaxSat: 0.45,     // and fairly little colour: average saturation, 0-1
   faceMin: 0.12,      // holder photo: face height as a share of the card height
   faceMax: 0.7,
   photoDark: 0.2,     // front: share of dark pixels in the holder-photo area
+  frontBlueGap: 25,   // front: how much bluer the top band is than the golden middle
+  barcodeTex: 28,     // back: texture of the barcode area
+  barcodeDarker: 10,  // back: how much darker the barcode area is than the top half
+  maskSat: 0.04,      // back: the pharaoh mask (top-left) is more colourful than the top middle
+  photoBlueDrop: 20,  // front: the photo is this much less blue than the top band
+  photoDarkDrop: 30,  // front: the photo's darker parts are this much darker than the top band
   holdMs: 1500,       // how long a wrong-document message stays before scanning again
 };
 for (const k of Object.keys(CFG)) {
@@ -1179,34 +1185,106 @@ function photoAreaDarkness(img) {
 }
 
 /** -> { kind: 'front' | 'back' | 'other' | 'unknown', upsideDown, metrics } */
+/** Shrinks the straightened card to 250 px wide by box-averaging, for layout checks. */
+function shrinkCard(img, w = 250) {
+  const f = img.width / w, h = Math.round(img.height / f), d = img.data, out = new Float32Array(w * h * 3);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      let r = 0, g = 0, b = 0, n = 0;
+      for (let yy = Math.floor(y * f); yy < Math.min(img.height, Math.floor((y + 1) * f)); yy++) {
+        for (let xx = Math.floor(x * f); xx < Math.min(img.width, Math.floor((x + 1) * f)); xx++) {
+          const i = (yy * img.width + xx) * 4; r += d[i]; g += d[i + 1]; b += d[i + 2]; n++;
+        }
+      }
+      const o = (y * w + x) * 3; out[o] = r / n; out[o + 1] = g / n; out[o + 2] = b / n;
+    }
+  }
+  return { w, h, px: out };
+}
+
+/** Mean blueness (blue minus red), brightness and texture of a box given as shares [x0, x1, y0, y1]. */
+function zone(small, box, flip) {
+  let [x0, x1, y0, y1] = box;
+  if (flip) [x0, x1, y0, y1] = [1 - x1, 1 - x0, 1 - y1, 1 - y0];
+  const { w, h, px } = small;
+  const X0 = Math.round(w * x0), X1 = Math.round(w * x1), Y0 = Math.round(h * y0), Y1 = Math.round(h * y1);
+  const L = (x, y) => { const o = (y * w + x) * 3; return (px[o] + px[o + 1] + px[o + 2]) / 3; };
+  let blue = 0, lum = 0, tex = 0, sat = 0, n = 0, nt = 0;
+  const hist = new Uint32Array(256);
+  for (let y = Y0; y < Y1; y++) {
+    for (let x = X0; x < X1; x++) {
+      const o = (y * w + x) * 3;
+      const mx = Math.max(px[o], px[o + 1], px[o + 2]), mn = Math.min(px[o], px[o + 1], px[o + 2]);
+      sat += mx ? (mx - mn) / mx : 0;
+      hist[Math.min(255, Math.round(L(x, y)))]++;
+      blue += px[o + 2] - px[o]; lum += L(x, y); n++;
+      if (x + 1 < X1 && y + 1 < Y1) { tex += Math.abs(L(x + 1, y) - L(x, y)) + Math.abs(L(x, y + 1) - L(x, y)); nt++; }
+    }
+  }
+  let acc = 0, p10 = 0;
+  for (let v = 0; v < 256; v++) { acc += hist[v]; if (acc >= n * 0.1) { p10 = v; break; } }
+  return { blue: blue / n, lum: lum / n, tex: tex / Math.max(1, nt), sat: sat / n, p10 };
+}
+
+/**
+ * Egyptian ID layout:
+ *  front: pale-blue band at the top, golden pyramids in the middle, holder photo on the left;
+ *  back: a large dense barcode across the bottom, under a pale beige top.
+ */
+function idLayout(small, flip) {
+  const top = zone(small, [0.32, 0.98, 0.03, 0.28], flip);
+  const mid = zone(small, [0.35, 0.95, 0.35, 0.75], flip);
+  const bar = zone(small, [0.12, 0.88, 0.64, 0.92], flip);
+  const upper = zone(small, [0.25, 0.75, 0.08, 0.5], flip);
+  const photo = zone(small, [0.02, 0.27, 0.12, 0.6], flip);
+  const mask = zone(small, [0.04, 0.22, 0.06, 0.4], flip);
+  const topMid = zone(small, [0.35, 0.65, 0.05, 0.4], flip);
+  return {
+    blueGap: top.blue - mid.blue,
+    // the photo is a non-blue block with darker content (hair, clothes) left of the blue band
+    photo: top.blue - photo.blue >= CFG.photoBlueDrop && top.lum - photo.p10 >= CFG.photoDarkDrop,
+    barTex: bar.tex,
+    barDarker: upper.lum - bar.lum,
+    // the coloured pharaoh mask at the top-left of the back
+    mask: mask.sat - topMid.sat,
+  };
+}
+
 async function classifyCard(out) {
   const { bright, sat } = colourProfile(out);
   const pale = bright >= CFG.idMinBright && sat <= CFG.idMaxSat;
   const dark = photoAreaDarkness(out);
-  const info = `bright ${bright} · sat ${sat.toFixed(2)} · photo-area ${(dark.left * 100).toFixed(0)}%/${(dark.right * 100).toFixed(0)}%`;
+  const small = shrinkCard(out);
+  const up = idLayout(small, false), down = idLayout(small, true);
+  const info = `bright ${bright} · sat ${sat.toFixed(2)} · blue-gap ${up.blueGap.toFixed(0)}/${down.blueGap.toFixed(0)}`
+    + ` · barcode ${up.barTex.toFixed(0)}/${down.barTex.toFixed(0)} · mask ${up.mask.toFixed(2)}/${down.mask.toFixed(2)} · photo-area ${(dark.left * 100).toFixed(0)}%/${(dark.right * 100).toFixed(0)}%`;
   if (!pale) return { kind: 'other', upsideDown: false, metrics: `${info} · not pale` };
 
-  // 1) face model, when it loaded
-  let faceLeft = false, faceRight = false, model = 'no model';
-  const det = await loadFaceDetector();
+  // Back: dense barcode across the bottom (or the top, when upside down)
+  const isBack = (l) => l.barTex >= CFG.barcodeTex && l.barDarker >= CFG.barcodeDarker && l.mask >= CFG.maskSat;
+  if (isBack(up)) return { kind: 'back', upsideDown: false, metrics: `${info} · barcode` };
+  if (isBack(down)) return { kind: 'back', upsideDown: true, metrics: `${info} · barcode (upside down)` };
+
+  // Front: blue top over golden middle, plus the holder photo on the left
+  const frontUp = up.blueGap >= CFG.frontBlueGap, frontDown = down.blueGap >= CFG.frontBlueGap;
+  if (!frontUp && !frontDown) return { kind: 'other', upsideDown: false, metrics: `${info} · not the ID layout` };
+  const photoLeft = dark.left >= CFG.photoDark && dark.left > dark.right * 1.5;
+  const photoRight = dark.right >= CFG.photoDark && dark.right > dark.left * 1.5;
+  if (frontUp && (up.photo || photoLeft)) return { kind: 'front', upsideDown: false, metrics: `${info} · photo` };
+  if (frontDown && (down.photo || photoRight)) return { kind: 'front', upsideDown: true, metrics: `${info} · photo (upside down)` };
+
+  // Photo not obvious from darkness: ask the face model, with a short time limit
+  const det = await Promise.race([loadFaceDetector(), sleep(2500).then(() => null)]);
   if (det) {
     const card = document.createElement('canvas');
     card.width = OUT_W; card.height = OUT_H;
     card.getContext('2d').putImageData(out, 0, 0);
     try {
-      faceLeft = hasHolderPhoto(det, card, 0);
-      faceRight = !faceLeft && hasHolderPhoto(det, card, OUT_W / 2);
-      model = faceLeft || faceRight ? 'face found' : 'no face';
-    } catch (e) { console.warn(e); model = 'model error'; }
+      if (frontUp && hasHolderPhoto(det, card, 0)) return { kind: 'front', upsideDown: false, metrics: `${info} · face` };
+      if (frontDown && hasHolderPhoto(det, card, OUT_W / 2)) return { kind: 'front', upsideDown: true, metrics: `${info} · face (upside down)` };
+    } catch (e) { console.warn(e); }
   }
-  // 2) photo area: a large dark block on one side only
-  const photoLeft = dark.left >= CFG.photoDark && dark.left > dark.right * 1.8;
-  const photoRight = !photoLeft && dark.right >= CFG.photoDark && dark.right > dark.left * 1.8;
-
-  const metrics = `${info} · ${model}`;
-  if (faceLeft || (!faceRight && photoLeft)) return { kind: 'front', upsideDown: false, metrics };
-  if (faceRight || photoRight) return { kind: 'front', upsideDown: true, metrics };
-  return { kind: 'back', upsideDown: false, metrics };
+  return { kind: 'other', upsideDown: false, metrics: `${info} · no holder photo` };
 }
 
 function documentProblem(side, doc) {
@@ -1378,6 +1456,7 @@ async function hasExistingAccount(digits) {
 }
 function alertMessages(checks) {
   const out = [];
+  if (checks.some((c) => (c.label === 'Front side' || c.label === 'Back side') && c.status === 'fail')) out.push('Not the correct document. This is not an Egyptian national ID.');
   if (checks.some((c) => c.label === 'Existing account' && c.status === 'fail')) out.push('You already have an existing account with this ID number.');
   if (checks.some((c) => c.label === 'Front and back ID number' && c.status === 'fail')) out.push('Information mismatch: the ID number on the front doesn’t match the ID number on the back.');
   return out;

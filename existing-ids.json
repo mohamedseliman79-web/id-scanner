@@ -2,5 +2,7 @@
   "about": "Fingerprints (PBKDF2-SHA256) of ID numbers that already have an account. The numbers themselves are not stored here.",
   "salt": "idscanner-4a402d40c5b6ad8857e93bcf",
   "iterations": 200000,
-  "hashes": []
+  "hashes": [
+    "2be9b14396c12b72b788c19f9451ae1bf7205b6e870886800740dc97432b70e0"
+  ]
 }
